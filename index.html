@@ -431,6 +431,15 @@
                 { id: 'w_dra', name: 'DRA N' }, { id: 'w_dr1', name: 'DR1 N' }, { id: 'w_dr2', name: 'DR2 N' }, { id: 'w_crn', name: 'CRN N' },
                 { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, { id: 'w_swing_spd', name: '搖擺速度 %' }, { id: 'w_cut_spd', name: '切邊速度 %' }
             ],
+            winder_line3: [
+                { id: 'w_dr1', name: 'DR1 DR2 N' }, 
+                { id: 'w3_flip_cut1', name: '翻轉/切斷前/切斷' },
+                { id: 'w3_flip_cut2', name: '切斷後/新軸切斷前/舊軸切斷' },
+                { id: 'w3_cr1', name: 'CR1/翻轉/壓卷 N' },
+                { id: 'w3_cr2', name: 'CR2/翻轉/壓接 N' },
+                { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, 
+                { id: 'w_cut_spd', name: '機台/切邊速度 %' }
+            ],
             thickness: [{ id: 't_thick', name: '厚度 μ' }],
             detector: [{ id: 'd_sens', name: '感度' }],
             specs: [
@@ -599,21 +608,85 @@
         function extractDataFromExcel(filename, jsonRaw) {
             let dateMatch = filename.match(/(\d{4})(\d{2})(\d{2})/);
             let dateStr = dateMatch ? `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}` : new Date().toISOString().split('T')[0];
-            let lineMatch = filename.match(/-([A-Za-z0-9])/i);
-            let lineStr = lineMatch ? lineMatch[1].toUpperCase() : 'A'; 
+            let lineStr = 'A'; 
+            
+            // 從檔名做初步猜測 (如果有 -A, -B, -C, -1, -2, -3)
+            let lineMatch = filename.match(/[-_]([A-C1-3])/i);
+            if (lineMatch) lineStr = lineMatch[1].toUpperCase();
+
             let remarksText = ""; let modelName = "未識別"; 
             let specs = { dieWidth: '--', fullWidth: '--', exhaustPressure: '--' };
 
-            for (let row of jsonRaw) {
+            // 輔助函數：往右尋找下一個非空白儲存格
+            const getNextCell = (row, index) => {
+                for(let i = index + 1; i < row.length; i++) {
+                    if (row[i] !== undefined && row[i] !== null && String(row[i]).trim() !== '') return String(row[i]).trim();
+                }
+                return null;
+            };
+
+            // 強化 Metadata 解析，搜尋前 25 列
+            for (let i = 0; i < Math.min(25, jsonRaw.length); i++) {
+                let row = jsonRaw[i];
                 if (!row) continue;
-                let rowStr = row.map(cell => cell ? String(cell).trim() : '').join(' ');
-                let cleanStr = rowStr.replace(/\s+/g, '');
                 
-                if (cleanStr.includes('產線別')) { const match = cleanStr.match(/產線別[：:\s]*([A-Za-z0-9]+)/); if (match) lineStr = match[1]; }
-                if (rowStr.includes('型號')) { const match = rowStr.match(/型號[：:\s]*([A-Za-z0-9\-]+)/); if (match) modelName = match[1]; }
-                if (rowStr.includes('膜頭寬')) { const match = rowStr.match(/膜頭寬[：:\s]*([A-Za-z0-9.]+|[\u4e00-\u9fa5]+)/); if (match) specs.dieWidth = match[1]; }
-                if (rowStr.includes('全膜寬')) { const match = rowStr.match(/全膜寬[：:\s]*([A-Za-z0-9.]+|[\u4e00-\u9fa5]+)/); if (match) specs.fullWidth = match[1]; }
-                if (rowStr.includes('排氣輪壓力')) { const match = rowStr.match(/排氣輪壓力[：:\s]*([A-Za-z0-9.]+|[\u4e00-\u9fa5]+)/); if (match) specs.exhaustPressure = match[1]; }
+                for (let j = 0; j < row.length; j++) {
+                    let cellStr = String(row[j] || '').trim();
+                    let cleanCell = cellStr.replace(/\s+/g, '').toUpperCase(); // 轉大寫去空白
+                    if (!cleanCell) continue;
+
+                    // 產線別擷取 (支援相鄰儲存格或同一格)
+                    if (/^(產線別|產線|機台|線別|機台別)$/.test(cleanCell)) {
+                        let val = getNextCell(row, j);
+                        if (val) lineStr = val.replace(/線$/, '').toUpperCase();
+                    } else if (/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/.test(cleanCell)) {
+                        lineStr = cleanCell.match(/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/)[1].replace(/線$/, '').toUpperCase();
+                    }
+
+                    // 型號擷取
+                    if (/^(型號|產品型號)$/.test(cleanCell)) {
+                        let val = getNextCell(row, j);
+                        if (val) modelName = val;
+                    } else if (/^(?:型號|產品型號)[：:]+(.+)$/.test(cleanCell)) {
+                        modelName = cleanCell.match(/^(?:型號|產品型號)[：:]+(.+)$/)[1];
+                    }
+
+                    // 膜頭寬擷取
+                    if (/^(膜頭寬|膜頭寬度)$/.test(cleanCell)) {
+                        let val = getNextCell(row, j);
+                        if (val) specs.dieWidth = val;
+                    } else if (/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/.test(cleanCell)) {
+                        specs.dieWidth = cleanCell.match(/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/)[1];
+                    }
+
+                    // 全膜寬擷取
+                    if (/^(全膜寬|全膜寬度)$/.test(cleanCell)) {
+                        let val = getNextCell(row, j);
+                        if (val) specs.fullWidth = val;
+                    } else if (/^(?:全膜寬|全膜寬度)[：:]+(.+)$/.test(cleanCell)) {
+                        specs.fullWidth = cleanCell.match(/^(?:全膜寬|全膜寬度)[：:]+(.+)$/)[1];
+                    }
+
+                    // 排氣輪壓力擷取
+                    if (/^(排氣輪壓力)$/.test(cleanCell)) {
+                        let val = getNextCell(row, j);
+                        if (val) specs.exhaustPressure = val;
+                    } else if (/^(?:排氣輪壓力)[：:]+(.+)$/.test(cleanCell)) {
+                        specs.exhaustPressure = cleanCell.match(/^(?:排氣輪壓力)[：:]+(.+)$/)[1];
+                    }
+                }
+                
+                // 暴力字串比對備援 (防止儲存格分割異常，強迫整列搜尋產線關鍵字)
+                let rowStr = row.map(cell => cell ? String(cell).trim() : '').join('');
+                let cleanStr = rowStr.replace(/\s+/g, '').toUpperCase();
+                if (cleanStr.includes('產線') || cleanStr.includes('機台') || cleanStr.includes('線別')) {
+                    if (['3', '三', 'C', 'Ｃ', '３'].some(k => cleanStr.includes(k))) lineStr = '3';
+                }
+            }
+            
+            // 確保統一轉換為 3 (防呆機制)
+            if (lineStr && ['3', '三', 'C', 'Ｃ', '３'].some(k => String(lineStr).includes(k))) {
+                lineStr = '3';
             }
 
             let combinedHeaders = []; let maxCols = 0; const searchLimit = Math.min(25, jsonRaw.length);
@@ -625,7 +698,17 @@
             }
 
             const findCol = (kw, rev = false) => { let iter = rev ? [...combinedHeaders].reverse() : combinedHeaders; for (let i = 0; i < iter.length; i++) if (kw.some(k => iter[i].includes(k))) return rev ? combinedHeaders.length - 1 - i : i; return -1; };
-            const colMap = { time: findCol(['時間', 'time']), back_pressure: findCol(['背壓']), temp: findCol(['溫度', 'temp']), pf_front: findCol(['pf前']), pf_back: findCol(['pf後']), p_diff: findCol(['壓差', '壓力差']), line_speed: findCol(['線速']), ac_height: findCol(['高度']), ac_dist: findCol(['距離']), ac_tilt: findCol(['傾斜']), ac_pressure: findCol(['風壓']), w_dra: findCol(['dra']), w_dr1: findCol(['dr1']), w_dr2: findCol(['dr2']), w_crn: findCol(['crn']), w_swing_amp: findCol(['幅度', '搖擺幅']), w_swing_spd: findCol(['搖擺速']), w_cut_spd: findCol(['切邊']), t_thick: findCol(['測厚', '厚度'], true), d_sens: findCol(['感度', '靈敏']), remarks_col: findCol(['備註', '備', '註']) };
+            const colMap = { 
+                time: findCol(['時間', 'time']), back_pressure: findCol(['背壓']), temp: findCol(['溫度', 'temp']), pf_front: findCol(['pf前']), pf_back: findCol(['pf後']), p_diff: findCol(['壓差', '壓力差']), line_speed: findCol(['線速']), 
+                ac_height: findCol(['高度']), ac_dist: findCol(['距離']), ac_tilt: findCol(['傾斜']), ac_pressure: findCol(['風壓']), 
+                w_dra: findCol(['dra']), w_dr1: findCol(['dr1']), w_dr2: findCol(['dr2']), w_crn: findCol(['crn']), 
+                w_swing_amp: findCol(['幅度', '搖擺幅']), w_swing_spd: findCol(['搖擺速']), w_cut_spd: findCol(['切邊']), 
+                w3_flip_cut1: findCol(['翻轉/切斷', '切斷前', '翻轉/']), 
+                w3_flip_cut2: findCol(['切斷後', '新軸', '舊軸']), 
+                w3_cr1: findCol(['cr1', '壓卷', '壓捲']), 
+                w3_cr2: findCol(['cr2', '壓接']),
+                t_thick: findCol(['測厚', '厚度'], true), d_sens: findCol(['感度', '靈敏']), remarks_col: findCol(['備註', '備', '註']) 
+            };
 
             if (colMap.remarks_col !== -1) {
                 for (let i = 0; i < jsonRaw.length; i++) {
@@ -650,7 +733,13 @@
                 if (tVal) lastTime = tVal; let curTime = lastTime;
 
                 let axis = ""; for (let c = 0; c < Math.min(row.length, 5); c++) { let cv = String(row[c] || '').toUpperCase().replace(/\s/g, ''); if (cv.includes('A')) axis = 'A'; else if (cv.includes('B')) axis = 'B'; else if (cv.includes('C')) axis = 'C'; if (axis) break; }
-                let hasData = (colMap.back_pressure !== -1 && row[colMap.back_pressure]) || (colMap.w_dra !== -1 && row[colMap.w_dra]);
+                
+                // 放寬資料檢查，確保不會因為單一欄位缺失而整列略過
+                let hasData = (colMap.back_pressure !== -1 && row[colMap.back_pressure]) || 
+                              (colMap.w_dra !== -1 && row[colMap.w_dra]) || 
+                              (colMap.w_dr1 !== -1 && row[colMap.w_dr1]) || 
+                              (colMap.w3_flip_cut1 !== -1 && row[colMap.w3_flip_cut1]) || 
+                              (colMap.t_thick !== -1 && row[colMap.t_thick]);
                 if (!hasData) continue; 
 
                 if (!timeGroups[curTime]) timeGroups[curTime] = { A: null, B: null, C: null, def: null };
@@ -666,7 +755,19 @@
                     id: Date.now() + '_' + Math.random().toString(36).substr(2, 5), filename: filename, date: dateStr, line: lineStr, time: t, remarks: remarksText, model: modelName, specs: specs,
                     extruder: { A: extGet(grp.A || def), B: extGet(grp.B || def), C: extGet(grp.C || def) },
                     airchamber: { ac_height: safeGet(def, colMap.ac_height), ac_dist: safeGet(def, colMap.ac_dist), ac_tilt: safeGet(def, colMap.ac_tilt), ac_pressure: safeGet(def, colMap.ac_pressure) },
-                    winder: { w_dra: safeGet(def, colMap.w_dra), w_dr1: safeGet(def, colMap.w_dr1), w_dr2: safeGet(def, colMap.w_dr2), w_crn: safeGet(def, colMap.w_crn), w_swing_amp: safeGet(def, colMap.w_swing_amp), w_swing_spd: safeGet(def, colMap.w_swing_spd), w_cut_spd: safeGet(def, colMap.w_cut_spd) },
+                    winder: { 
+                        w_dra: safeGet(def, colMap.w_dra), 
+                        w_dr1: safeGet(def, colMap.w_dr1), 
+                        w_dr2: safeGet(def, colMap.w_dr2), 
+                        w_crn: safeGet(def, colMap.w_crn), 
+                        w_swing_amp: safeGet(def, colMap.w_swing_amp), 
+                        w_swing_spd: safeGet(def, colMap.w_swing_spd), 
+                        w_cut_spd: safeGet(def, colMap.w_cut_spd),
+                        w3_flip_cut1: safeGet(def, colMap.w3_flip_cut1), 
+                        w3_flip_cut2: safeGet(def, colMap.w3_flip_cut2), 
+                        w3_cr1: safeGet(def, colMap.w3_cr1), 
+                        w3_cr2: safeGet(def, colMap.w3_cr2)
+                    },
                     thickness: { t_thick: safeGet(def, colMap.t_thick) }, detector: { d_sens: safeGet(def, colMap.d_sens) }
                 });
             }
@@ -767,12 +868,13 @@
                     </div>
                 </div>`;
             }
+            
             container.innerHTML = html;
         }
 
-        function toggleOverviewModel(safeKey) {
-            const content = document.getElementById(`content-model-${safeKey}`);
-            const icon = document.getElementById(`icon-model-${safeKey}`);
+        function toggleOverviewModel(model) {
+            const content = document.getElementById(`content-model-${model}`);
+            const icon = document.getElementById(`icon-model-${model}`);
             content.classList.toggle('hidden'); content.classList.toggle('flex');
             if(content.classList.contains('hidden')) { icon.classList.remove('fa-chevron-down'); icon.classList.add('fa-chevron-right'); }
             else { icon.classList.remove('fa-chevron-right'); icon.classList.add('fa-chevron-down'); }
@@ -783,9 +885,16 @@
             if(record) renderSingleDashboard(record);
         }
 
-        function generateTableHTML(section, prevData, currData) {
+        function generateTableHTML(section, prevData, currData, line = null) {
             let html = '';
-            configSchema[section].forEach(item => {
+            let schema = configSchema[section];
+            
+            // 判斷是否為產線三，動態切換 Winder Schema
+            if (section === 'winder' && line && (line === '3' || line === '三' || line === 'C')) {
+                schema = configSchema.winder_line3;
+            }
+
+            schema.forEach(item => {
                 const prevVal = prevData ? prevData[item.id] : '--';
                 const currVal = currData[item.id];
                 
@@ -892,8 +1001,14 @@
                 });
                 ['airchamber', 'winder', 'thickness', 'detector', 'specs'].forEach(sec => {
                     let secName = sec === 'winder' ? 'Winder (收捲機)' : (sec === 'specs' ? '規格參數' : sec);
-                    if (configSchema[sec]) {
-                        configSchema[sec].forEach(item => {
+                    let schema = configSchema[sec];
+                    
+                    if (sec === 'winder' && (newRecord.line === '3' || newRecord.line === '三' || newRecord.line === 'C')) {
+                        schema = configSchema.winder_line3;
+                    }
+
+                    if (schema) {
+                        schema.forEach(item => {
                             let prev = previousRecord[sec][item.id]; let curr = newRecord[sec][item.id];
                             if (prev !== '--' && checkIsDifferent(prev, curr)) differences.push({ section: secName, name: item.name, prev: prev, curr: curr });
                         });
@@ -914,7 +1029,7 @@
 
             document.getElementById('table-extruder').innerHTML = generateExtruderTableHTML(previousRecord?.extruder, newRecord.extruder);
             document.getElementById('table-airchamber').innerHTML = generateTableHTML('airchamber', previousRecord?.airchamber, newRecord.airchamber);
-            document.getElementById('table-winder').innerHTML = generateTableHTML('winder', previousRecord?.winder, newRecord.winder);
+            document.getElementById('table-winder').innerHTML = generateTableHTML('winder', previousRecord?.winder, newRecord.winder, newRecord.line);
             document.getElementById('table-thickness').innerHTML = generateTableHTML('thickness', previousRecord?.thickness, newRecord.thickness);
             document.getElementById('table-detector').innerHTML = generateTableHTML('detector', previousRecord?.detector, newRecord.detector);
 
@@ -1091,6 +1206,14 @@
         }
 
         function generateBatchNormalTable(title, sectionKey, records, headerBg, icon) {
+            let schema = configSchema[sectionKey];
+            if (sectionKey === 'winder' && records.length > 0) {
+                const line = records[0].line;
+                if (line === '3' || line === '三' || line === 'C') {
+                    schema = configSchema.winder_line3;
+                }
+            }
+
             let html = `
             <div class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card shadow-sm">
                 <div class="${headerBg} text-white px-5 py-3 flex justify-between items-center"><h2 class="text-md font-bold flex items-center"><i class="${icon} mr-3"></i> ${title} - 批次比對</h2></div>
@@ -1099,7 +1222,7 @@
             records.forEach(r => html += `<th class="px-3 py-3 text-center font-bold text-indigo-800 border-r border-b bg-indigo-50 leading-tight">${r.date.slice(5)}<br/><span class="text-lg">${r.time}</span></th>`);
             html += `</tr></thead><tbody class="bg-white divide-y divide-gray-200">`;
 
-            configSchema[sectionKey].forEach(item => {
+            schema.forEach(item => {
                 html += `<tr class="hover:bg-indigo-50 transition border-b"><td class="px-3 py-2 font-bold text-gray-800 border-r bg-gray-50 sticky left-0 z-10 shadow-[1px_0_0_0_#e5e7eb]">${item.name}</td>`;
                 for (let i = 0; i < records.length; i++) {
                     const currVal = records[i][sectionKey][item.id]; let diffClass = 'text-gray-700 font-medium', eqText = '';
