@@ -5,13 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>鴻威ALPHA製程參數管制比對系統</title>
     
-    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- SheetJS for Excel parsing -->
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-    <!-- Chart.js for trend charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script type="module">
@@ -29,7 +25,8 @@
         };
         
         let app, db;
-        window.importedDatabase = []; // 全域資料庫
+        window.importedDatabase = []; 
+        window.importedRecipes = []; 
         window.isFirebaseLoaded = false;
 
         try {
@@ -50,72 +47,73 @@
                     if(!data.customer) data.customer = '未指定';
                     cloudData.push(data);
                 });
-                
                 if (cloudData.length > 0) {
-                    window.importedDatabase = cloudData;
-                    // 確保日期時間排序 (舊到新)
-                    window.importedDatabase.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
-                    window.isFirebaseLoaded = true;
-                    if (typeof renderOverview === 'function') renderOverview();
-                    if (typeof updateDatalists === 'function') updateDatalists();
-                } else {
-                    window.isFirebaseLoaded = true;
-                    if (typeof renderOverview === 'function') renderOverview();
-                    if (typeof updateDatalists === 'function') updateDatalists();
+                    window.importedDatabase = cloudData.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
                 }
-            } catch (error) {
-                console.error("❌ 載入 Firebase 歷史資料失敗:", error);
-            }
+                window.isFirebaseLoaded = true;
+                if (typeof renderOverview === 'function') renderOverview();
+                if (typeof updateDatalists === 'function') updateDatalists();
+            } catch (error) { console.error("載入 Firebase 歷史資料失敗:", error); }
         };
 
-        window.saveRecordToFirebase = async function(record) {
+        window.saveRecordToFirebase = async function(record) { if (!db) return; try { await setDoc(doc(db, "process_records", record.id), record); } catch (e) { console.error(e); } };
+        window.deleteRecordFromFirebase = async function(id) { if (!db) return; try { await deleteDoc(doc(db, "process_records", id)); } catch (e) { console.error(e); } };
+
+        window.fetchRecipesFromFirebase = async function() {
             if (!db) return;
             try {
-                await setDoc(doc(db, "process_records", record.id), record);
-            } catch (error) {
-                console.error("❌ 寫入 Firebase 失敗:", error);
-            }
+                const querySnapshot = await getDocs(collection(db, "recipes"));
+                let cloudData = [];
+                querySnapshot.forEach((doc) => cloudData.push(doc.data()));
+                window.importedRecipes = cloudData;
+                if (typeof renderRecipeList === 'function') renderRecipeList();
+            } catch (error) { console.error("載入配方失敗:", error); }
         };
 
-        window.deleteRecordFromFirebase = async function(id) {
-            if (!db) return;
-            try {
-                await deleteDoc(doc(db, "process_records", id));
-            } catch (error) {
-                console.error("❌ 刪除 Firebase 資料失敗:", error);
-            }
-        };
+        window.saveRecipeToFirebase = async function(recipe) { if (!db) return; try { await setDoc(doc(db, "recipes", recipe.id), recipe); } catch (e) { console.error(e); } };
+        window.deleteRecipeFromFirebase = async function(id) { if (!db) return; try { await deleteDoc(doc(db, "recipes", id)); } catch (e) { console.error(e); } };
         
+        window.clearAllRecipes = async function() {
+            if (!db) { window.showAppMessage("錯誤", "尚未連接雲端資料庫", "error"); return; }
+            
+            window.showAppConfirm("清空配方警告", "確定要清除雲端「所有」配方資料嗎？\n此操作無法復原，建議在舊資料格式錯亂時使用以重新匯入。", async () => {
+                const btn = document.getElementById('btn-clear-recipes');
+                if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> 清除中...'; btn.disabled = true; }
+                try {
+                    const querySnapshot = await getDocs(collection(db, "recipes"));
+                    const deletePromises = [];
+                    querySnapshot.forEach((docSnap) => deletePromises.push(deleteDoc(doc(db, "recipes", docSnap.id))));
+                    await Promise.all(deletePromises);
+                    window.importedRecipes = [];
+                    window.showAppMessage("成功", "已成功清空所有配方資料！請重新匯入排程。", "success");
+                    if (typeof renderRecipeList === 'function') renderRecipeList();
+                } catch (error) {
+                    console.error("清除資料失敗:", error); 
+                    window.showAppMessage("錯誤", "清除資料失敗，請檢查網路連線。", "error");
+                } finally {
+                    if (btn) { btn.innerHTML = '<i class="fas fa-trash-alt mr-2"></i> 清空舊資料'; btn.disabled = false; }
+                }
+            });
+        };
+
         window.addEventListener('DOMContentLoaded', () => {
             if(window.fetchRecordsFromFirebase) window.fetchRecordsFromFirebase();
+            if(window.fetchRecipesFromFirebase) window.fetchRecipesFromFirebase();
         });
     </script>
 
     <style>
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f3f4f6; }
-        
-        @keyframes blink {
-            0% { opacity: 1; color: #dc2626; font-weight: bold; background-color: #fee2e2; }
-            50% { opacity: 0.5; color: #b91c1c; font-weight: bold; background-color: #fca5a5; } 
-            100% { opacity: 1; color: #dc2626; font-weight: bold; background-color: #fee2e2; }
-        }
+        @keyframes blink { 0% { opacity: 1; color: #dc2626; font-weight: bold; background-color: #fee2e2; } 50% { opacity: 0.5; color: #b91c1c; font-weight: bold; background-color: #fca5a5; } 100% { opacity: 1; color: #dc2626; font-weight: bold; background-color: #fee2e2; } }
         .diff-blink { animation: blink 1.2s infinite; border-radius: 4px; }
-
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
         .section-card { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); transition: all 0.3s ease; }
         .section-card:hover { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
-
-        .fullscreen-card {
-            position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
-            z-index: 100 !important; margin: 0 !important; border-radius: 0 !important; display: flex !important; flex-direction: column !important;
-            background-color: #f8fafc !important;
-        }
+        .fullscreen-card { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; z-index: 100 !important; margin: 0 !important; border-radius: 0 !important; display: flex !important; flex-direction: column !important; background-color: #f8fafc !important; }
         .fullscreen-card > div:nth-child(2) { flex-grow: 1; overflow-y: auto; }
-        
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
@@ -125,20 +123,14 @@
     <header class="bg-blue-800 text-white shadow-md py-4 px-6 sticky top-0 z-20 flex justify-between items-center">
         <div class="flex items-center space-x-4">
             <i class="fas fa-cogs text-2xl"></i>
-            <h1 class="text-2xl font-bold tracking-wider hidden sm:block">鴻威ALPHA製程參數管制比對系統</h1>
-            
+            <h1 class="text-2xl font-bold tracking-wider hidden sm:block">鴻威ALPHA製程系統</h1>
             <div class="ml-2 sm:ml-6 flex space-x-2">
-                <button onclick="switchTab('overview')" id="tab-overview" class="px-4 py-2 rounded-md bg-blue-900 font-bold text-white shadow-inner transition hover:bg-blue-700">
-                    <i class="fas fa-list-alt mr-2"></i>歷史總覽與比對
-                </button>
-                <button onclick="switchTab('import')" id="tab-import" class="px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition hover:text-white">
-                    <i class="fas fa-cloud-upload-alt mr-2"></i>每日資料匯入
-                </button>
+                <button onclick="switchTab('overview')" id="tab-overview" class="px-4 py-2 rounded-md bg-blue-900 font-bold text-white shadow-inner transition hover:bg-blue-700 flex items-center"><i class="fas fa-list-alt mr-2"></i>歷史總覽</button>
+                <button onclick="switchTab('import')" id="tab-import" class="px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition hover:text-white flex items-center"><i class="fas fa-cloud-upload-alt mr-2"></i>資料匯入</button>
+                <button onclick="switchTab('recipe')" id="tab-recipe" class="px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition hover:text-white flex items-center"><i class="fas fa-flask mr-2"></i>配方資料庫</button>
             </div>
         </div>
-        <div class="text-sm bg-blue-700 px-3 py-1 rounded-full border border-blue-600 hidden md:flex items-center">
-            <i class="far fa-clock mr-2"></i><span id="current-time"></span>
-        </div>
+        <div class="text-sm bg-blue-700 px-3 py-1 rounded-full border border-blue-600 hidden md:flex items-center"><i class="far fa-clock mr-2"></i><span id="current-time"></span></div>
     </header>
 
     <main class="flex-grow p-6 flex flex-col space-y-6 max-w-7xl mx-auto w-full relative">
@@ -147,1133 +139,664 @@
             <div class="bg-white rounded-xl p-8 shadow-sm border border-gray-200 flex flex-col items-center justify-center max-w-3xl mx-auto mt-10 w-full">
                 <i class="fas fa-cloud-upload-alt text-6xl text-blue-500 mb-6"></i>
                 <h2 class="text-2xl font-bold text-gray-800 mb-2">每日製程資料匯入</h2>
-                <p class="text-gray-500 mb-8 text-center">請輸入客戶名稱與寬幅，並上傳 Excel 紀錄表。<br>資料將自動解析並儲存至雲端，供日後於「總覽」中點擊比對。</p>
-                
+                <p class="text-gray-500 mb-8 text-center">請輸入客戶名稱與寬幅，並上傳 Excel 紀錄表。<br>資料將自動解析並儲存至雲端。</p>
                 <div class="w-full max-w-md space-y-5">
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fas fa-user-tag text-blue-500 mr-1"></i> 客戶名稱</label>
-                        <input type="text" id="input-customer-name" list="customer-list" autocomplete="off" placeholder="如: 豐時" class="w-full border border-gray-300 rounded-md shadow-sm p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <datalist id="customer-list"></datalist>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fas fa-ruler-horizontal text-red-500 mr-1"></i> 寬幅規格 (比對基準)</label>
-                        <input type="text" id="input-width-spec" list="width-list" autocomplete="off" placeholder="如: 1200" class="w-full border border-gray-300 rounded-md shadow-sm p-3 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-yellow-50 text-red-700 font-bold">
-                        <datalist id="width-list"></datalist>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fas fa-file-excel text-green-600 mr-1"></i> 上傳 Excel 檔案</label>
-                        <input type="file" id="excel-upload" accept=".xlsx, .xls" class="w-full border border-gray-300 rounded-md shadow-sm p-2 bg-white file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer transition">
-                    </div>
+                    <div><label class="block text-sm font-bold text-gray-700 mb-1">客戶名稱</label><input type="text" id="input-customer-name" list="customer-list" autocomplete="off" class="w-full border border-gray-300 rounded-md p-3 outline-none focus:border-blue-500"><datalist id="customer-list"></datalist></div>
+                    <div><label class="block text-sm font-bold text-gray-700 mb-1">寬幅規格</label><input type="text" id="input-width-spec" list="width-list" autocomplete="off" class="w-full border border-gray-300 rounded-md p-3 bg-yellow-50 font-bold outline-none"><datalist id="width-list"></datalist></div>
+                    <div><label class="block text-sm font-bold text-gray-700 mb-1">上傳 Excel</label><input type="file" id="excel-upload" accept=".xlsx, .xls" class="w-full border border-gray-300 rounded-md p-2 bg-white cursor-pointer"></div>
                 </div>
-
                 <div id="import-status" class="mt-8 hidden w-full max-w-md p-4 rounded-lg flex items-center justify-center space-x-3 transition-all"></div>
             </div>
         </div>
 
         <div id="tab-content-overview" class="flex flex-col space-y-6 w-full fade-in">
-            
-            <!-- 總覽列表視圖 (預設顯示) -->
             <div id="overview-list-view" class="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
                 <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-xl font-bold text-gray-800"><i class="fas fa-layer-group text-blue-600 mr-2"></i> 已匯入資料總覽 (依型號與寬幅分類)</h2>
-                    <div class="relative">
-                        <input type="text" id="overview-search" placeholder="搜尋型號或客戶..." class="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm outline-none w-64" oninput="renderOverview()">
-                        <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
-                    </div>
+                    <h2 class="text-xl font-bold text-gray-800"><i class="fas fa-layer-group text-blue-600 mr-2"></i> 已匯入資料總覽</h2>
+                    <div class="relative"><input type="text" id="overview-search" placeholder="搜尋型號或客戶..." class="pl-10 pr-4 py-2 border rounded-md outline-none w-64" oninput="renderOverview()"><i class="fas fa-search absolute left-3 top-3 text-gray-400"></i></div>
                 </div>
-                
-                <div id="overview-container" class="space-y-4">
-                    <div class="text-center py-10 text-gray-400">
-                        <i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p>載入雲端資料中...</p>
-                    </div>
-                </div>
+                <div id="overview-container" class="space-y-4"><div class="text-center py-10 text-gray-400"><i class="fas fa-spinner fa-spin text-3xl mb-2"></i><p>載入雲端資料中...</p></div></div>
             </div>
 
+            <!-- 單筆比對儀表板 (已折疊精簡化保留原有邏輯結構) -->
             <div id="dashboard-container" class="hidden flex-col space-y-6 w-full fade-in">
-                <!-- Dashboard Header -->
-                <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
                     <div class="flex-grow">
                         <h2 class="text-xl font-bold text-blue-800 mb-3"><i class="fas fa-chart-line mr-2"></i> 單筆製程比對分析</h2>
-                        <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm bg-white p-3 rounded-lg border border-blue-100 shadow-sm">
-                            <div><span class="text-gray-500 font-bold">客戶:</span> <span id="info-customer" class="font-semibold text-gray-800 text-base"></span></div>
-                            <div><span class="text-gray-500 font-bold">日期:</span> <span id="info-date" class="font-semibold text-gray-800 text-base"></span></div>
-                            <div><span class="text-gray-500 font-bold">產線:</span> <span id="info-line" class="font-semibold text-gray-800 text-base"></span></div>
-                            <div><span class="text-gray-500 font-bold">型號:</span> <span id="info-model" class="font-semibold text-gray-800 text-base"></span></div>
+                        <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm bg-white p-3 rounded-lg border shadow-sm">
+                            <div><span class="text-gray-500 font-bold">客戶:</span> <span id="info-customer" class="font-semibold text-base"></span></div>
+                            <div><span class="text-gray-500 font-bold">日期:</span> <span id="info-date" class="font-semibold text-base"></span></div>
+                            <div><span class="text-gray-500 font-bold">產線:</span> <span id="info-line" class="font-semibold text-base"></span></div>
+                            <div><span class="text-gray-500 font-bold">型號:</span> <span id="info-model" class="font-semibold text-base"></span></div>
                             <div><span class="text-gray-500 font-bold">寬幅:</span> <span id="info-width-spec" class="font-semibold text-red-600 text-base"></span></div>
-                            <div class="pl-4 border-l border-blue-200 flex items-center">
-                                <span class="text-gray-500 font-bold mr-2">前次基準 (同型號+寬幅):</span> 
-                                <span id="info-prev-time" class="font-bold"></span>
-                            </div>
+                            <div class="pl-4 border-l flex items-center"><span class="text-gray-500 font-bold mr-2">前次基準:</span> <span id="info-prev-time" class="font-bold"></span></div>
                         </div>
                     </div>
                     <div class="shrink-0 flex items-center space-x-3">
-                        <button onclick="promptDeleteSingle()" class="bg-white border border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 px-4 py-2.5 rounded-lg shadow-sm text-sm font-bold transition flex items-center">
-                            <i class="fas fa-trash-alt mr-2"></i> 刪除此筆
-                        </button>
-                        <button onclick="closeDashboard()" class="bg-white border border-blue-300 text-blue-700 hover:bg-blue-600 hover:text-white px-5 py-2.5 rounded-lg shadow-sm text-sm font-bold transition flex items-center">
-                            <i class="fas fa-reply mr-2"></i> 返回總覽列表
-                        </button>
+                        <button onclick="promptDeleteSingle()" class="bg-white border border-red-300 text-red-600 px-4 py-2.5 rounded-lg shadow-sm text-sm font-bold hover:bg-red-50"><i class="fas fa-trash-alt mr-2"></i>刪除</button>
+                        <button onclick="closeDashboard()" class="bg-white border border-blue-300 text-blue-700 px-5 py-2.5 rounded-lg shadow-sm text-sm font-bold hover:bg-blue-50"><i class="fas fa-reply mr-2"></i>返回總覽</button>
                     </div>
                 </div>
 
-                <!-- Section 1: Extruder -->
-                <div id="card-extruder" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card">
+                <div id="card-extruder" class="bg-white rounded-xl border overflow-hidden section-card">
                     <div class="bg-slate-700 text-white px-5 py-3 flex justify-between items-center cursor-pointer" onclick="toggleSection('extruder-content', 'extruder-icon')">
-                        <h2 class="text-lg font-bold flex items-center"><i class="fas fa-industry mr-3"></i> 1. 押出機 (Extruder) - 三層共擠壓管制參數</h2>
-                        <div class="flex items-center space-x-4">
-                            <button onclick="toggleFullscreen(event, 'card-extruder')" title="放大/縮小" class="text-white hover:text-gray-300 transition transform hover:scale-110"><i class="fas fa-expand text-lg"></i></button>
-                            <i id="extruder-icon" class="fas fa-chevron-up transition-transform duration-300"></i>
-                        </div>
+                        <h2 class="text-lg font-bold"><i class="fas fa-industry mr-3"></i> 1. 押出機 (Extruder)</h2>
+                        <div class="flex space-x-4"><button onclick="toggleFullscreen(event, 'card-extruder')" class="text-white"><i class="fas fa-expand text-lg"></i></button><i id="extruder-icon" class="fas fa-chevron-up"></i></div>
                     </div>
-                    <div id="extruder-content" class="p-5">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-                            <div class="overflow-x-auto rounded-lg border border-gray-200 h-full">
-                                <table class="min-w-full divide-y divide-gray-200 text-sm h-full">
-                                    <thead class="bg-gray-50">
-                                        <tr>
-                                            <th rowspan="2" class="px-3 py-3 text-left font-medium text-gray-500 uppercase tracking-wider border-b border-r bg-gray-50 sticky left-0 z-10">管制項目</th>
-                                            <th rowspan="2" class="px-2 py-3 text-center font-medium text-gray-500 uppercase tracking-wider border-b border-r bg-gray-50">管制標準</th>
-                                            <th colspan="3" class="px-2 py-2 text-center font-medium text-gray-500 uppercase tracking-wider border-b border-r bg-gray-100">前次紀錄</th>
-                                            <th colspan="3" class="px-2 py-2 text-center font-medium text-blue-700 uppercase tracking-wider border-b bg-blue-100 border-l border-blue-200">本次選擇</th>
-                                        </tr>
-                                        <tr>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-gray-500 bg-gray-100">A軸</th>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-gray-500 bg-gray-100">B軸</th>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-gray-500 bg-gray-100 border-r">C軸</th>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-blue-600 bg-blue-50 border-l border-blue-200">A軸</th>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-blue-600 bg-blue-50">B軸</th>
-                                            <th class="px-1 py-1 text-center text-xs font-medium text-blue-600 bg-blue-50">C軸</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="table-extruder" class="bg-white divide-y divide-gray-200"></tbody>
-                                </table>
-                            </div>
-                            <div class="flex flex-col h-full border border-gray-200 rounded-lg p-4 bg-gray-50">
-                                <div class="flex justify-between items-center mb-4">
-                                    <h3 class="font-bold text-gray-700"><i class="fas fa-chart-line mr-2"></i> 歷史趨勢圖</h3>
-                                    <select id="chart-param-select" class="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white py-1 px-2 border outline-none cursor-pointer">
-                                        <option value="back_pressure">背壓 (40↓)</option>
-                                        <option value="temp">溫度 (250℃↓)</option>
-                                        <option value="pf_front">PF前 Mpa</option>
-                                        <option value="pf_back">PF後 Mpa</option>
-                                        <option value="p_diff">壓差 (1.5↑)</option>
-                                        <option value="line_speed">線速 M/min</option>
-                                    </select>
-                                </div>
-                                <div class="flex-grow relative w-full min-h-[250px] lg:min-h-[300px]"><canvas id="trendChart"></canvas></div>
-                            </div>
-                        </div>
-                    </div>
+                    <div id="extruder-content" class="p-5"><div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full"><div class="overflow-x-auto rounded-lg border h-full"><table class="min-w-full divide-y text-sm h-full"><thead class="bg-gray-50"><tr><th rowspan="2" class="px-3 py-3 text-left bg-gray-50 sticky left-0 z-10">管制項目</th><th rowspan="2" class="px-2 py-3 text-center bg-gray-50">管制標準</th><th colspan="3" class="px-2 py-2 text-center bg-gray-100">前次紀錄</th><th colspan="3" class="px-2 py-2 text-center text-blue-700 bg-blue-100">本次選擇</th></tr><tr><th class="px-1 py-1 text-center bg-gray-100">A軸</th><th class="px-1 py-1 text-center bg-gray-100">B軸</th><th class="px-1 py-1 text-center bg-gray-100">C軸</th><th class="px-1 py-1 text-center text-blue-600 bg-blue-50 border-l">A軸</th><th class="px-1 py-1 text-center text-blue-600 bg-blue-50">B軸</th><th class="px-1 py-1 text-center text-blue-600 bg-blue-50">C軸</th></tr></thead><tbody id="table-extruder" class="bg-white divide-y"></tbody></table></div><div class="flex flex-col h-full border rounded-lg p-4 bg-gray-50"><div class="flex justify-between mb-4"><h3 class="font-bold text-gray-700">歷史趨勢圖</h3><select id="chart-param-select" class="text-sm border rounded-md py-1 px-2"><option value="back_pressure">背壓</option><option value="temp">溫度</option><option value="pf_front">PF前</option><option value="pf_back">PF後</option><option value="p_diff">壓差</option><option value="line_speed">線速</option></select></div><div class="flex-grow relative w-full min-h-[250px]"><canvas id="trendChart"></canvas></div></div></div></div>
                 </div>
 
-                <!-- Sections 2-6 -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div id="card-airchamber" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card flex flex-col">
-                        <div class="bg-sky-700 text-white px-4 py-2.5 flex justify-between items-center cursor-pointer" onclick="toggleSection('airchamber-content', 'airchamber-icon')">
-                            <h2 class="text-md font-bold flex items-center"><i class="fas fa-wind mr-2"></i> 2. Air Chamber</h2>
-                            <div class="flex items-center space-x-3"><button onclick="toggleFullscreen(event, 'card-airchamber')" class="text-white hover:text-gray-200 transition"><i class="fas fa-expand text-sm"></i></button><i id="airchamber-icon" class="fas fa-chevron-up"></i></div>
-                        </div>
-                        <div id="airchamber-content" class="p-0 overflow-x-auto flex-grow"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-gray-500 border-r">項目</th><th class="px-3 py-2 text-right text-xs font-medium text-gray-500 border-r">前次紀錄</th><th class="px-3 py-2 text-right text-xs font-medium text-blue-600 bg-blue-50">本次選擇</th></tr></thead><tbody id="table-airchamber" class="bg-white divide-y divide-gray-200"></tbody></table></div>
-                    </div>
-
-                    <div id="card-winder" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card flex flex-col">
-                        <div class="bg-indigo-700 text-white px-4 py-2.5 flex justify-between items-center cursor-pointer" onclick="toggleSection('winder-content', 'winder-icon')">
-                            <h2 class="text-md font-bold flex items-center"><i class="fas fa-scroll mr-2"></i> 3. Winder (收捲機)</h2>
-                            <div class="flex items-center space-x-3"><button onclick="toggleFullscreen(event, 'card-winder')" class="text-white hover:text-gray-200 transition"><i class="fas fa-expand text-sm"></i></button><i id="winder-icon" class="fas fa-chevron-up"></i></div>
-                        </div>
-                        <div id="winder-content" class="p-0 overflow-x-auto flex-grow"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-gray-500 border-r">項目</th><th class="px-3 py-2 text-right text-xs font-medium text-gray-500 border-r">前次紀錄</th><th class="px-3 py-2 text-right text-xs font-medium text-blue-600 bg-blue-50">本次選擇</th></tr></thead><tbody id="table-winder" class="bg-white divide-y divide-gray-200"></tbody></table></div>
-                    </div>
-
-                    <div id="card-thickness" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card flex flex-col">
-                        <div class="bg-emerald-700 text-white px-4 py-2.5 flex justify-between items-center cursor-pointer" onclick="toggleSection('thickness-content', 'thickness-icon')">
-                            <h2 class="text-md font-bold flex items-center"><i class="fas fa-ruler-combined mr-2"></i> 4. 測厚儀 (Thickness Gauge)</h2>
-                            <div class="flex items-center space-x-3"><button onclick="toggleFullscreen(event, 'card-thickness')" class="text-white hover:text-gray-200 transition"><i class="fas fa-expand text-sm"></i></button><i id="thickness-icon" class="fas fa-chevron-up"></i></div>
-                        </div>
-                        <div id="thickness-content" class="p-0 overflow-x-auto flex-grow"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-gray-500 border-r">項目</th><th class="px-3 py-2 text-right text-xs font-medium text-gray-500 border-r">前次紀錄</th><th class="px-3 py-2 text-right text-xs font-medium text-blue-600 bg-blue-50">本次選擇</th></tr></thead><tbody id="table-thickness" class="bg-white divide-y divide-gray-200"></tbody></table></div>
-                    </div>
-
-                    <div id="card-detector" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card flex flex-col">
-                        <div class="bg-purple-700 text-white px-4 py-2.5 flex justify-between items-center cursor-pointer" onclick="toggleSection('detector-content', 'detector-icon')">
-                            <h2 class="text-md font-bold flex items-center"><i class="fas fa-search-plus mr-2"></i> 5. 檢出機 (Detector)</h2>
-                            <div class="flex items-center space-x-3"><button onclick="toggleFullscreen(event, 'card-detector')" class="text-white hover:text-gray-200 transition"><i class="fas fa-expand text-sm"></i></button><i id="detector-icon" class="fas fa-chevron-up"></i></div>
-                        </div>
-                        <div id="detector-content" class="p-0 overflow-x-auto flex-grow"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-2 text-left text-xs font-medium text-gray-500 border-r">項目</th><th class="px-3 py-2 text-right text-xs font-medium text-gray-500 border-r">前次紀錄</th><th class="px-3 py-2 text-right text-xs font-medium text-blue-600 bg-blue-50">本次選擇</th></tr></thead><tbody id="table-detector" class="bg-white divide-y divide-gray-200"></tbody></table></div>
-                    </div>
-
-                    <div id="card-remarks" class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card md:col-span-2 flex flex-col">
-                        <div class="bg-orange-600 text-white px-4 py-2.5 flex justify-between items-center cursor-pointer" onclick="toggleSection('remarks-content', 'remarks-icon')">
-                            <h2 class="text-md font-bold flex items-center"><i class="fas fa-clipboard-list mr-2"></i> 6. 規格與重要異動備註</h2>
-                            <div class="flex items-center space-x-3"><button onclick="toggleFullscreen(event, 'card-remarks')" class="text-white hover:text-gray-200 transition"><i class="fas fa-expand text-sm"></i></button><i id="remarks-icon" class="fas fa-chevron-up"></i></div>
-                        </div>
-                        <div id="remarks-content" class="p-5 bg-orange-50 flex flex-col md:flex-row gap-6 flex-grow">
-                            <div class="md:w-1/3 bg-white p-4 rounded-lg shadow-sm border border-orange-200">
-                                <h3 class="text-sm font-bold text-orange-800 mb-3 border-b border-orange-100 pb-2"><i class="fas fa-tags mr-1"></i> 自動識別規格</h3>
-                                <ul class="space-y-3">
-                                    <li class="flex justify-between items-center"><span class="text-xs text-gray-500 font-medium">膜頭寬</span><span id="spec-die-width" class="text-sm font-bold text-gray-800">--</span></li>
-                                    <li class="flex justify-between items-center"><span class="text-xs text-gray-500 font-medium">全膜寬</span><span id="spec-full-width" class="text-sm font-bold text-gray-800">--</span></li>
-                                    <li class="flex justify-between items-center"><span class="text-xs text-gray-500 font-medium">排氣輪壓力</span><span id="spec-exhaust-pressure" class="text-sm font-bold text-gray-800">--</span></li>
-                                </ul>
-                            </div>
-                            <div class="md:w-2/3 bg-white p-4 rounded-lg shadow-sm border border-orange-200">
-                                <h3 class="text-sm font-bold text-orange-800 mb-3 border-b border-orange-100 pb-2"><i class="fas fa-exclamation-triangle mr-1"></i> 製程異常 / 異動備註</h3>
-                                <pre id="info-remarks" class="whitespace-pre-wrap font-sans text-sm text-gray-700 leading-relaxed min-h-[80px]">尚無備註資訊</pre>
-                            </div>
-                        </div>
-                    </div>
+                    <div id="card-airchamber" class="bg-white rounded-xl border overflow-hidden section-card flex flex-col"><div class="bg-sky-700 text-white px-4 py-2.5 flex justify-between cursor-pointer" onclick="toggleSection('airchamber-content', 'airchamber-icon')"><h2 class="text-md font-bold"><i class="fas fa-wind mr-2"></i> 2. Air Chamber</h2><i id="airchamber-icon" class="fas fa-chevron-up"></i></div><div id="airchamber-content" class="p-0 flex-grow"><table class="min-w-full divide-y text-sm"><tbody id="table-airchamber" class="bg-white divide-y"></tbody></table></div></div>
+                    <div id="card-winder" class="bg-white rounded-xl border overflow-hidden section-card flex flex-col"><div class="bg-indigo-700 text-white px-4 py-2.5 flex justify-between cursor-pointer" onclick="toggleSection('winder-content', 'winder-icon')"><h2 class="text-md font-bold"><i class="fas fa-scroll mr-2"></i> 3. Winder</h2><i id="winder-icon" class="fas fa-chevron-up"></i></div><div id="winder-content" class="p-0 flex-grow"><table class="min-w-full divide-y text-sm"><tbody id="table-winder" class="bg-white divide-y"></tbody></table></div></div>
+                    <div id="card-thickness" class="bg-white rounded-xl border overflow-hidden section-card flex flex-col"><div class="bg-emerald-700 text-white px-4 py-2.5 flex justify-between cursor-pointer" onclick="toggleSection('thickness-content', 'thickness-icon')"><h2 class="text-md font-bold"><i class="fas fa-ruler-combined mr-2"></i> 4. 測厚儀</h2><i id="thickness-icon" class="fas fa-chevron-up"></i></div><div id="thickness-content" class="p-0 flex-grow"><table class="min-w-full divide-y text-sm"><tbody id="table-thickness" class="bg-white divide-y"></tbody></table></div></div>
+                    <div id="card-detector" class="bg-white rounded-xl border overflow-hidden section-card flex flex-col"><div class="bg-purple-700 text-white px-4 py-2.5 flex justify-between cursor-pointer" onclick="toggleSection('detector-content', 'detector-icon')"><h2 class="text-md font-bold"><i class="fas fa-search-plus mr-2"></i> 5. 檢出機</h2><i id="detector-icon" class="fas fa-chevron-up"></i></div><div id="detector-content" class="p-0 flex-grow"><table class="min-w-full divide-y text-sm"><tbody id="table-detector" class="bg-white divide-y"></tbody></table></div></div>
+                    <div id="card-remarks" class="bg-white rounded-xl border overflow-hidden section-card md:col-span-2 flex flex-col"><div class="bg-orange-600 text-white px-4 py-2.5 flex justify-between cursor-pointer" onclick="toggleSection('remarks-content', 'remarks-icon')"><h2 class="text-md font-bold"><i class="fas fa-clipboard-list mr-2"></i> 6. 規格與備註</h2><i id="remarks-icon" class="fas fa-chevron-up"></i></div><div id="remarks-content" class="p-5 bg-orange-50 flex flex-col md:flex-row gap-6 flex-grow"><div class="md:w-1/3 bg-white p-4 rounded-lg shadow-sm border"><h3 class="text-sm font-bold text-orange-800 mb-3 border-b pb-2"><i class="fas fa-tags mr-1"></i> 自動識別規格</h3><ul class="space-y-3"><li class="flex justify-between"><span class="text-xs text-gray-500">膜頭寬</span><span id="spec-die-width" class="font-bold">--</span></li><li class="flex justify-between"><span class="text-xs text-gray-500">全膜寬</span><span id="spec-full-width" class="font-bold">--</span></li><li class="flex justify-between"><span class="text-xs text-gray-500">排氣輪壓力</span><span id="spec-exhaust-pressure" class="font-bold">--</span></li></ul></div><div class="md:w-2/3 bg-white p-4 rounded-lg shadow-sm border"><h3 class="text-sm font-bold text-orange-800 mb-3 border-b pb-2"><i class="fas fa-exclamation-triangle mr-1"></i> 備註</h3><pre id="info-remarks" class="whitespace-pre-wrap font-sans text-sm text-gray-700 min-h-[80px]"></pre></div></div></div>
                 </div>
             </div>
 
             <div id="batch-dashboard-container" class="hidden flex-col space-y-6 w-full fade-in">
-                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4">
-                    <div>
-                        <h2 class="text-xl font-bold text-indigo-800 mb-1"><i class="fas fa-layer-group mr-2"></i> 歷史批次比對模式</h2>
-                        <p class="text-sm text-indigo-600 font-medium" id="batch-info-text">已選擇 X 筆資料進行比對 (由左至右依時間排序)</p>
-                    </div>
-                    <button onclick="closeDashboard()" class="shrink-0 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-600 hover:text-white px-5 py-2.5 rounded-lg shadow-sm text-sm font-bold transition flex items-center">
-                        <i class="fas fa-reply mr-2"></i> 返回總覽列表
-                    </button>
+                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex justify-between items-center shadow-sm">
+                    <div><h2 class="text-xl font-bold text-indigo-800 mb-1"><i class="fas fa-layer-group mr-2"></i> 歷史批次比對模式</h2><p class="text-sm text-indigo-600" id="batch-info-text"></p></div>
+                    <button onclick="closeDashboard()" class="bg-white border text-indigo-700 px-5 py-2.5 rounded-lg font-bold"><i class="fas fa-reply mr-2"></i> 返回</button>
                 </div>
                 <div id="batch-tables-container" class="space-y-6"></div>
             </div>
         </div>
 
+        <div id="tab-content-recipe" class="hidden flex-col space-y-6 w-full fade-in">
+            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold text-gray-800"><i class="fas fa-flask text-green-600 mr-2"></i> 產線排程配方資料庫</h2>
+                    <div class="flex items-center space-x-4">
+                        <label class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md shadow text-sm font-bold cursor-pointer transition flex items-center">
+                            <i class="fas fa-upload mr-2"></i> 匯入排程配方
+                            <input type="file" id="recipe-upload" accept=".xlsx, .xls" class="hidden">
+                        </label>
+                        <div class="relative">
+                            <input type="text" id="recipe-search" placeholder="搜尋型號或鳥嘴器..." class="pl-9 pr-3 py-2 border border-gray-300 rounded-md outline-none w-56 text-sm focus:border-green-500" oninput="handleRecipeSearch()">
+                            <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                        </div>
+                        <button id="btn-clear-recipes" onclick="clearAllRecipes()" class="bg-white border border-red-300 text-red-600 hover:bg-red-50 px-4 py-2 rounded-md shadow-sm text-sm font-bold transition flex items-center">
+                            <i class="fas fa-trash-alt mr-2"></i> 清空舊資料
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="bg-green-50 border-l-4 border-green-500 p-3 mb-6 text-sm text-green-800 shadow-sm rounded-r-lg font-medium">
+                    <i class="fas fa-info-circle mr-1"></i> 請上傳包含配方的排程表。系統將透過智慧正則表達式，自動精準分離「型號」與「鳥嘴器名稱」，並過濾無效的空資料。
+                </div>
+                
+                <!-- 配方總覽 (條列式清單) -->
+                <div id="recipe-overview-view" class="w-full">
+                    <div class="text-center p-8 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>載入雲端配方中...</div>
+                </div>
+
+                <!-- 配方詳細 (表格) -->
+                <div id="recipe-detail-view" class="hidden flex-col w-full">
+                    <div class="mb-4 flex items-center justify-between bg-green-50 p-4 rounded-lg border border-green-200 shadow-sm">
+                        <h3 class="text-lg font-bold text-green-800" id="recipe-detail-title"></h3>
+                        <button onclick="backToRecipeOverview()" class="text-sm bg-white border border-green-300 text-green-700 hover:bg-green-600 hover:text-white px-5 py-2 rounded-md transition font-bold shadow-sm flex items-center"><i class="fas fa-reply mr-2"></i> 返回清單</button>
+                    </div>
+                    <div class="border border-gray-200 rounded-lg overflow-x-auto shadow-sm">
+                        <table class="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-4 py-3 text-left font-bold text-gray-700 w-28 border-r">添加日期</th>
+                                    <th class="px-4 py-3 text-left font-bold text-gray-700 w-1/4 border-r">鳥嘴器 (Device)</th>
+                                    <th class="px-3 py-3 text-center font-bold text-gray-700 w-16 border-r">軸向</th>
+                                    <th class="px-4 py-3 text-left font-bold text-gray-700 border-r">使用原料組成</th>
+                                    <th class="px-4 py-3 text-center font-bold text-gray-700 w-24 border-r">各層占比</th>
+                                    <th class="px-4 py-3 text-center font-bold text-gray-700 w-16">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recipe-detail-body" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
-    <!-- 差異警示 Modal -->
-    <div id="diff-alert-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-[60] flex items-center justify-center backdrop-blur-sm transition-opacity">
-        <div class="bg-white rounded-xl shadow-2xl w-11/12 max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border-2 border-red-500">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-red-50">
-                <h3 class="text-xl font-bold text-red-700 flex items-center"><i class="fas fa-exclamation-triangle mr-2 text-red-600 blink"></i> 發現製程參數異動警報！</h3>
-                <button onclick="closeDiffAlert()" class="text-gray-400 hover:text-red-500 transition"><i class="fas fa-times text-2xl"></i></button>
-            </div>
-            <div class="p-6 flex-grow overflow-y-auto bg-white">
-                <p class="text-gray-700 mb-4 font-medium text-lg">您選擇的資料 (<span id="alert-model" class="text-blue-700 font-bold"></span>) 與前次歷史紀錄相比發生異動：</p>
-                <div class="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                    <table class="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-100">
-                            <tr><th class="px-4 py-3 text-left font-bold text-gray-600 w-1/4">管制區塊</th><th class="px-4 py-3 text-left font-bold text-gray-600 w-1/4">參數項目</th><th class="px-4 py-3 text-center font-bold text-gray-600 w-1/4">前次紀錄</th><th class="px-4 py-3 text-center font-bold text-red-600 w-1/4">本次選擇數值</th></tr>
-                        </thead>
-                        <tbody id="diff-alert-body" class="bg-white divide-y divide-gray-200"></tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-end bg-gray-50">
-                <button onclick="closeDiffAlert()" class="px-6 py-2.5 bg-red-600 text-white rounded-md hover:bg-red-700 font-bold transition shadow-md text-lg">確認並關閉</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 歷史資料庫自訂批次 Modal -->
-    <div id="db-modal" class="fixed inset-0 bg-gray-900 bg-opacity-60 hidden z-50 flex items-center justify-center backdrop-blur-sm transition-opacity">
-        <div class="bg-white rounded-xl shadow-2xl w-11/12 max-w-5xl max-h-[85vh] flex flex-col overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-check-square text-indigo-600 mr-2"></i> 自訂歷史批次比對選單</h3>
-                <button onclick="closeDatabaseModal()" class="text-gray-400 hover:text-red-500 transition"><i class="fas fa-times text-2xl"></i></button>
-            </div>
-            <div class="p-6 flex-grow overflow-y-auto flex flex-col space-y-4 bg-gray-50/50">
-                <div class="flex justify-between items-end gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-100 hidden">
-                    <input type="text" id="db-search-input" class="hidden"> <!-- Hidden but kept for logic compatibility -->
-                </div>
-                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3 text-sm text-yellow-800 shadow-sm rounded-r-lg flex justify-between items-center">
-                    <div><i class="fas fa-info-circle mr-1"></i> 請由下方清單勾選要跨時段進行批次比對的紀錄 (最多 5 筆)。</div>
-                    <div class="font-bold text-base bg-yellow-200 px-3 py-1 rounded-full text-yellow-800">已選: <span id="selected-count">0</span> / 5</div>
-                </div>
-                <div class="border border-gray-200 rounded-lg overflow-hidden shadow-sm bg-white">
-                    <table class="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-100">
-                            <tr><th class="px-4 py-3 text-left w-16 font-bold text-gray-600">勾選</th><th class="px-4 py-3 text-left font-bold text-gray-600">日期與時間</th><th class="px-4 py-3 text-left font-bold text-gray-600">產線</th><th class="px-4 py-3 text-left font-bold text-gray-600">生產型號 / 寬幅</th></tr>
-                        </thead>
-                        <tbody id="db-list-body" class="bg-white divide-y divide-gray-200"></tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3 bg-white">
-                <button onclick="closeDatabaseModal()" class="px-5 py-2.5 border border-gray-300 text-gray-700 font-bold rounded-md hover:bg-gray-100 transition">取消</button>
-                <button onclick="executeBatchCompare()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-bold transition shadow-md flex items-center"><i class="fas fa-play mr-2"></i> 執行比對</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 刪除確認 Modal -->
-    <div id="delete-confirm-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-[70] flex items-center justify-center backdrop-blur-sm transition-opacity">
-        <div class="bg-white rounded-xl shadow-2xl w-11/12 max-w-md flex flex-col overflow-hidden border border-red-200">
-            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-red-50">
-                <h3 class="text-lg font-bold text-red-700 flex items-center"><i class="fas fa-exclamation-circle mr-2 text-red-600"></i> 刪除確認</h3>
-                <button onclick="closeDeleteModal()" class="text-gray-400 hover:text-red-500 transition"><i class="fas fa-times text-xl"></i></button>
+    <div id="custom-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-[999] flex items-center justify-center backdrop-blur-sm transition-opacity">
+        <div class="bg-white rounded-xl shadow-2xl w-11/12 max-w-md flex flex-col overflow-hidden border">
+            <div id="custom-modal-header" class="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                <h3 id="custom-modal-title" class="text-lg font-bold text-gray-800 flex items-center"><i id="custom-modal-icon" class="mr-2"></i><span>提示</span></h3>
             </div>
             <div class="p-6 bg-white">
-                <p id="delete-modal-text" class="text-gray-700 font-medium text-base">確定要刪除此筆紀錄嗎？</p>
-                <p class="text-sm text-red-500 mt-2"><i class="fas fa-info-circle mr-1"></i> 此操作將同時從雲端資料庫徹底刪除，且無法復原。</p>
+                <p id="custom-modal-text" class="text-gray-700 font-medium text-base whitespace-pre-wrap"></p>
             </div>
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3 bg-gray-50">
-                <button onclick="closeDeleteModal()" class="px-5 py-2 border border-gray-300 text-gray-700 font-bold rounded-md hover:bg-gray-100 transition shadow-sm">取消</button>
-                <button id="btn-confirm-delete" onclick="executeDelete()" class="px-5 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-bold transition shadow-sm flex items-center"><i class="fas fa-trash-alt mr-2"></i> 確認刪除</button>
+            <div class="px-6 py-4 border-t flex justify-end space-x-3 bg-gray-50">
+                <button id="btn-modal-cancel" class="px-5 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100 hidden transition shadow-sm font-bold">取消</button>
+                <button id="btn-modal-confirm" class="px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition shadow-sm font-bold">確定</button>
             </div>
         </div>
+    </div>
+
+    <div id="diff-alert-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-[60] flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-white rounded-xl w-11/12 max-w-4xl max-h-[85vh] flex flex-col border-2 border-red-500">
+            <div class="px-6 py-4 border-b bg-red-50 flex justify-between"><h3 class="text-xl font-bold text-red-700"><i class="fas fa-exclamation-triangle mr-2 blink"></i> 發現製程參數異動警報！</h3><button onclick="closeDiffAlert()" class="text-gray-400 hover:text-red-500"><i class="fas fa-times text-2xl"></i></button></div>
+            <div class="p-6 flex-grow overflow-y-auto"><p class="mb-4 font-medium text-lg">選擇資料 (<span id="alert-model" class="text-blue-700 font-bold"></span>) 與前次發生異動：</p><div class="border rounded-lg"><table class="min-w-full divide-y text-sm"><thead class="bg-gray-100"><tr><th class="px-4 py-3 text-left">管制區塊</th><th class="px-4 py-3 text-left">項目</th><th class="px-4 py-3 text-center">前次</th><th class="px-4 py-3 text-center text-red-600">本次</th></tr></thead><tbody id="diff-alert-body" class="divide-y"></tbody></table></div></div>
+            <div class="px-6 py-4 border-t bg-gray-50 flex justify-end"><button onclick="closeDiffAlert()" class="px-6 py-2.5 bg-red-600 text-white rounded-md font-bold">確認關閉</button></div>
+        </div>
+    </div>
+    <div id="db-modal" class="fixed inset-0 bg-gray-900 bg-opacity-60 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl w-11/12 max-w-5xl max-h-[85vh] flex flex-col"><div class="px-6 py-4 border-b flex justify-between bg-gray-50"><h3 class="text-lg font-bold"><i class="fas fa-check-square text-indigo-600 mr-2"></i> 自訂批次比對</h3><button onclick="closeDatabaseModal()" class="text-gray-400 hover:text-red-500"><i class="fas fa-times text-2xl"></i></button></div><div class="p-6 flex-grow overflow-y-auto bg-gray-50/50"><div class="border rounded-lg bg-white"><table class="min-w-full divide-y text-sm"><thead class="bg-gray-100"><tr><th class="px-4 py-3 text-left w-16">勾選</th><th class="px-4 py-3 text-left">日期時間</th><th class="px-4 py-3 text-left">產線</th><th class="px-4 py-3 text-left">型號/寬幅</th></tr></thead><tbody id="db-list-body" class="divide-y"></tbody></table></div></div><div class="px-6 py-4 border-t flex justify-end space-x-3 bg-white"><button onclick="closeDatabaseModal()" class="px-5 py-2.5 border rounded-md">取消</button><button onclick="executeBatchCompare()" class="px-5 py-2.5 bg-indigo-600 text-white rounded-md">執行</button></div></div>
+    </div>
+    <div id="delete-confirm-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden z-[70] flex items-center justify-center">
+        <div class="bg-white rounded-xl w-11/12 max-w-md flex flex-col border border-red-200"><div class="px-6 py-4 border-b bg-red-50 flex justify-between"><h3 class="text-lg font-bold text-red-700"><i class="fas fa-exclamation-circle mr-2 text-red-600"></i> 刪除確認</h3><button onclick="closeDeleteModal()" class="text-gray-400"><i class="fas fa-times text-xl"></i></button></div><div class="p-6 bg-white"><p id="delete-modal-text" class="text-gray-700 font-medium">確定要刪除嗎？</p></div><div class="px-6 py-4 border-t bg-gray-50 flex justify-end space-x-3"><button onclick="closeDeleteModal()" class="px-5 py-2 border rounded-md">取消</button><button id="btn-confirm-delete" onclick="executeDelete()" class="px-5 py-2 bg-red-600 text-white rounded-md">確認刪除</button></div></div>
     </div>
 
     <script>
+        // --- 變數宣告與基礎設定 ---
         let trendChartInstance = null;
         let selectedForBatch = []; 
         let currentViewedRecordId = null;
         let pendingDelete = { type: null, data: null };
+        let currentRecipeModel = null;
+        let customModalCallback = null;
 
         const configSchema = {
-            extruder: [
-                { id: 'back_pressure', name: '背壓', standard: '40↓' }, { id: 'temp', name: '溫度', standard: '250℃↓' },
-                { id: 'pf_front', name: 'PF前', standard: 'Mpa' }, { id: 'pf_back', name: 'PF後', standard: 'Mpa' },
-                { id: 'p_diff', name: '壓差', standard: '1.5↑' }, { id: 'line_speed', name: '線速', standard: 'M/min' }
-            ],
-            airchamber: [
-                { id: 'ac_height', name: '高度' }, { id: 'ac_dist', name: '距離' }, { id: 'ac_tilt', name: '傾斜' }, { id: 'ac_pressure', name: '風壓 Pa' }
-            ],
-            winder: [
-                { id: 'w_dra', name: 'DRA N' }, { id: 'w_dr1', name: 'DR1 N' }, { id: 'w_dr2', name: 'DR2 N' }, { id: 'w_crn', name: 'CRN N' },
-                { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, { id: 'w_swing_spd', name: '搖擺速度 %' }, { id: 'w_cut_spd', name: '切邊速度 %' }
-            ],
-            winder_line3: [
-                { id: 'w_dr1', name: 'DR1 DR2 N' }, 
-                { id: 'w3_flip_cut1', name: '翻轉/切斷前/切斷' },
-                { id: 'w3_flip_cut2', name: '切斷後/新軸切斷前/舊軸切斷' },
-                { id: 'w3_cr1', name: 'CR1/翻轉/壓卷 N' },
-                { id: 'w3_cr2', name: 'CR2/翻轉/壓接 N' },
-                { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, 
-                { id: 'w_cut_spd', name: '機台/切邊速度 %' }
-            ],
-            thickness: [{ id: 't_thick', name: '厚度 μ' }],
-            detector: [{ id: 'd_sens', name: '感度' }],
-            specs: [
-                { id: 'dieWidth', name: '膜頭寬' }, { id: 'fullWidth', name: '全膜寬' }, { id: 'exhaustPressure', name: '排氣輪壓力' }
-            ]
+            extruder: [{ id: 'back_pressure', name: '背壓', standard: '40↓' }, { id: 'temp', name: '溫度', standard: '250℃↓' }, { id: 'pf_front', name: 'PF前', standard: 'Mpa' }, { id: 'pf_back', name: 'PF後', standard: 'Mpa' }, { id: 'p_diff', name: '壓差', standard: '1.5↑' }, { id: 'line_speed', name: '線速', standard: 'M/min' }],
+            airchamber: [{ id: 'ac_height', name: '高度' }, { id: 'ac_dist', name: '距離' }, { id: 'ac_tilt', name: '傾斜' }, { id: 'ac_pressure', name: '風壓 Pa' }],
+            winder: [{ id: 'w_dra', name: 'DRA N' }, { id: 'w_dr1', name: 'DR1 N' }, { id: 'w_dr2', name: 'DR2 N' }, { id: 'w_crn', name: 'CRN N' }, { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, { id: 'w_swing_spd', name: '搖擺速度 %' }, { id: 'w_cut_spd', name: '切邊速度 %' }],
+            winder_line3: [{ id: 'w_dr1', name: 'DR1 DR2 N' }, { id: 'w3_flip_cut1', name: '翻轉/切斷前/切斷' }, { id: 'w3_flip_cut2', name: '切斷後/新軸切斷前/舊軸切斷' }, { id: 'w3_cr1', name: 'CR1/翻轉/壓卷 N' }, { id: 'w3_cr2', name: 'CR2/翻轉/壓接 N' }, { id: 'w_swing_amp', name: '搖擺幅度', standard: '6cm↓' }, { id: 'w_cut_spd', name: '機台/切邊速度 %' }],
+            thickness: [{ id: 't_thick', name: '厚度 μ' }], detector: [{ id: 'd_sens', name: '感度' }], specs: [{ id: 'dieWidth', name: '膜頭寬' }, { id: 'fullWidth', name: '全膜寬' }, { id: 'exhaustPressure', name: '排氣輪壓力' }]
         };
 
-        // --- 核心過濾比對邏輯 ---
-        function checkIsDifferent(val1, val2) {
-            if (val1 === val2) return false;
-            if (val1 === null || val1 === undefined || val2 === null || val2 === undefined) return String(val1) !== String(val2);
-            if (val1 === '--' || val2 === '--') return false; // 忽略與未定義資料的比對
+        // --- Custom Modal Functions ---
+        window.showAppMessage = function(title, text, type = 'info') {
+            const modal = document.getElementById('custom-modal');
+            const icon = document.getElementById('custom-modal-icon');
+            const header = document.getElementById('custom-modal-header');
+            const confirmBtn = document.getElementById('btn-modal-confirm');
             
-            // 移除所有空白與跳格
-            const clean1 = String(val1).replace(/\s+/g, '');
-            const clean2 = String(val2).replace(/\s+/g, '');
-            if (clean1 === clean2) return false;
+            document.getElementById('custom-modal-title').querySelector('span').textContent = title;
+            document.getElementById('custom-modal-text').textContent = text;
+            document.getElementById('btn-modal-cancel').classList.add('hidden');
             
-            // 數值等價比對 (處理 40 與 40.0 的情況)
-            const num1 = Number(clean1);
-            const num2 = Number(clean2);
-            if (!isNaN(num1) && !isNaN(num2)) return num1 !== num2;
+            icon.className = 'mr-2 fas';
+            if(type === 'error') { icon.classList.add('fa-times-circle', 'text-red-600'); header.className = "px-6 py-4 border-b flex justify-between items-center bg-red-50"; confirmBtn.className = "px-5 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-bold"; }
+            else if(type === 'success') { icon.classList.add('fa-check-circle', 'text-green-600'); header.className = "px-6 py-4 border-b flex justify-between items-center bg-green-50"; confirmBtn.className = "px-5 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-bold"; }
+            else if(type === 'warning') { icon.classList.add('fa-exclamation-triangle', 'text-orange-500'); header.className = "px-6 py-4 border-b flex justify-between items-center bg-orange-50"; confirmBtn.className = "px-5 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 font-bold"; }
+            else { icon.classList.add('fa-info-circle', 'text-blue-600'); header.className = "px-6 py-4 border-b flex justify-between items-center bg-blue-50"; confirmBtn.className = "px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-bold"; }
             
-            return true; // 若清完空白且不是等價數值，則視為不同
-        }
+            customModalCallback = null;
+            modal.classList.remove('hidden');
+        };
 
-        // --- 尋找同一型號與寬幅的「前一筆歷史紀錄」 ---
-        function findPreviousRecord(currentRecord) {
-            const validPastRecords = window.importedDatabase.filter(d => 
-                d.line === currentRecord.line && 
-                d.model === currentRecord.model &&
-                d.widthSpec === currentRecord.widthSpec &&
-                (new Date(d.date + 'T' + d.time) < new Date(currentRecord.date + 'T' + currentRecord.time))
-            );
-            // 確保依時間排序，取最後一筆即為最靠近的前次紀錄
-            validPastRecords.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
-            if (validPastRecords.length > 0) return validPastRecords[validPastRecords.length - 1];
-            return null;
-        }
+        window.showAppConfirm = function(title, text, onConfirmCallback) {
+            const modal = document.getElementById('custom-modal');
+            const icon = document.getElementById('custom-modal-icon');
+            const header = document.getElementById('custom-modal-header');
+            const confirmBtn = document.getElementById('btn-modal-confirm');
+            
+            document.getElementById('custom-modal-title').querySelector('span').textContent = title;
+            document.getElementById('custom-modal-text').textContent = text;
+            document.getElementById('btn-modal-cancel').classList.remove('hidden');
+            
+            icon.className = 'mr-2 fas fa-exclamation-circle text-orange-600';
+            header.className = "px-6 py-4 border-b flex justify-between items-center bg-orange-50";
+            confirmBtn.className = "px-5 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-bold";
+            
+            customModalCallback = onConfirmCallback;
+            modal.classList.remove('hidden');
+        };
 
+        document.getElementById('btn-modal-confirm').addEventListener('click', () => {
+            document.getElementById('custom-modal').classList.add('hidden');
+            if (customModalCallback) { customModalCallback(); customModalCallback = null; }
+        });
+        document.getElementById('btn-modal-cancel').addEventListener('click', () => { document.getElementById('custom-modal').classList.add('hidden'); customModalCallback = null; });
+
+
+        // --- 共用UI ---
+        function checkIsDifferent(val1, val2) { if (val1 === val2) return false; if (val1 === null || val1 === undefined || val2 === null || val2 === undefined) return String(val1) !== String(val2); if (val1 === '--' || val2 === '--') return false; const c1 = String(val1).replace(/\s+/g, ''); const c2 = String(val2).replace(/\s+/g, ''); if (c1 === c2) return false; const n1 = Number(c1); const n2 = Number(c2); if (!isNaN(n1) && !isNaN(n2)) return n1 !== n2; return true; }
+        
         function switchTab(tabName) {
-            const importTab = document.getElementById('tab-import');
-            const overviewTab = document.getElementById('tab-overview');
-            const importContent = document.getElementById('tab-content-import');
-            const overviewContent = document.getElementById('tab-content-overview');
-
-            if (tabName === 'import') {
-                importTab.className = "px-4 py-2 rounded-md bg-blue-900 font-bold text-white shadow-inner transition hover:bg-blue-700 flex items-center";
-                overviewTab.className = "px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition hover:text-white flex items-center";
-                importContent.classList.remove('hidden'); importContent.classList.add('flex');
-                overviewContent.classList.add('hidden'); overviewContent.classList.remove('flex');
-            } else if (tabName === 'overview') {
-                overviewTab.className = "px-4 py-2 rounded-md bg-blue-900 font-bold text-white shadow-inner transition hover:bg-blue-700 flex items-center";
-                importTab.className = "px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition hover:text-white flex items-center";
-                overviewContent.classList.remove('hidden'); overviewContent.classList.add('flex');
-                importContent.classList.add('hidden'); importContent.classList.remove('flex');
-                
-                // 返回總覽首頁時，預設隱藏所有 Dashboard
-                closeDashboard(); 
-            }
-        }
-
-        function updateClock() {
-            const now = new Date();
-            document.getElementById('current-time').textContent = now.toLocaleString('zh-TW', {
-                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+            ['import', 'overview', 'recipe'].forEach(t => {
+                const btn = document.getElementById(`tab-${t}`); const content = document.getElementById(`tab-content-${t}`);
+                if (t === tabName) { btn.className = "px-4 py-2 rounded-md bg-blue-900 font-bold text-white shadow-inner transition flex items-center"; content.classList.remove('hidden'); content.classList.add('flex'); } 
+                else { btn.className = "px-4 py-2 rounded-md bg-blue-700 font-medium text-blue-100 hover:bg-blue-600 transition flex items-center"; content.classList.add('hidden'); content.classList.remove('flex'); }
             });
-        }
-        setInterval(updateClock, 1000); updateClock();
-
-        function toggleSection(contentId, iconId) {
-            const content = document.getElementById(contentId);
-            const icon = document.getElementById(iconId);
-            content.classList.toggle('hidden');
-            if (content.classList.contains('hidden')) { icon.classList.remove('fa-chevron-up'); icon.classList.add('fa-chevron-down'); }
-            else { icon.classList.remove('fa-chevron-down'); icon.classList.add('fa-chevron-up'); }
+            if (tabName === 'overview') closeDashboard();
+            if (tabName === 'recipe') { if (currentRecipeModel) backToRecipeOverview(); else renderRecipeList(); }
         }
 
-        function toggleFullscreen(event, cardId) {
-            if (event) event.stopPropagation(); 
-            const card = document.getElementById(cardId);
-            const icon = event.currentTarget.querySelector('i');
-            if (card.classList.contains('fullscreen-card')) {
-                card.classList.remove('fullscreen-card'); icon.classList.remove('fa-compress'); icon.classList.add('fa-expand'); document.body.style.overflow = ''; 
-            } else {
-                card.classList.add('fullscreen-card'); icon.classList.remove('fa-expand'); icon.classList.add('fa-compress'); document.body.style.overflow = 'hidden'; 
-                const content = document.getElementById(cardId.replace('card-', '') + '-content');
-                if (content && content.classList.contains('hidden')) toggleSection(content.id, cardId.replace('card-', '') + '-icon');
-            }
-            if (cardId === 'card-extruder' && trendChartInstance) setTimeout(() => trendChartInstance.resize(), 150);
-        }
+        function updateClock() { document.getElementById('current-time').textContent = new Date().toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }); } setInterval(updateClock, 1000); updateClock();
+        function toggleSection(contentId, iconId) { const c = document.getElementById(contentId); const i = document.getElementById(iconId); c.classList.toggle('hidden'); if(c.classList.contains('hidden')) { i.classList.remove('fa-chevron-up'); i.classList.add('fa-chevron-down'); } else { i.classList.remove('fa-chevron-down'); i.classList.add('fa-chevron-up'); } }
+        function toggleFullscreen(event, cardId) { if (event) event.stopPropagation(); const c = document.getElementById(cardId); const i = event.currentTarget.querySelector('i'); if(c.classList.contains('fullscreen-card')) { c.classList.remove('fullscreen-card'); i.classList.remove('fa-compress'); i.classList.add('fa-expand'); document.body.style.overflow = ''; } else { c.classList.add('fullscreen-card'); i.classList.remove('fa-expand'); i.classList.add('fa-compress'); document.body.style.overflow = 'hidden'; } if (cardId === 'card-extruder' && trendChartInstance) setTimeout(() => trendChartInstance.resize(), 150); }
 
         function closeDiffAlert() { document.getElementById('diff-alert-modal').classList.add('hidden'); }
         function closeDatabaseModal() { document.getElementById('db-modal').classList.add('hidden'); }
+        function closeDashboard() { document.getElementById('dashboard-container').classList.add('hidden'); document.getElementById('dashboard-container').classList.remove('flex'); document.getElementById('batch-dashboard-container').classList.add('hidden'); document.getElementById('batch-dashboard-container').classList.remove('flex'); document.getElementById('overview-list-view').classList.remove('hidden'); if (window.isFirebaseLoaded) renderOverview(); }
 
-        function closeDashboard() {
-            document.getElementById('dashboard-container').classList.add('hidden');
-            document.getElementById('dashboard-container').classList.remove('flex');
-            document.getElementById('batch-dashboard-container').classList.add('hidden');
-            document.getElementById('batch-dashboard-container').classList.remove('flex');
-            
-            document.getElementById('overview-list-view').classList.remove('hidden');
-            if (window.isFirebaseLoaded) renderOverview(); // 重新整理總表
-        }
-
-        function handleFileUpload(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const customerName = document.getElementById('input-customer-name').value.trim();
-            const userWidthSpec = document.getElementById('input-width-spec').value.trim();
-            
-            if (!customerName || !userWidthSpec) {
-                alert("請先輸入「客戶名稱」與「寬幅規格」再選擇檔案！");
-                e.target.value = ''; return;
-            }
-
-            const statusDiv = document.getElementById('import-status');
-            statusDiv.classList.remove('hidden');
-            statusDiv.className = "mt-8 w-full max-w-md p-4 rounded-lg flex items-center justify-center space-x-3 bg-blue-50 border border-blue-200 text-blue-700 font-bold";
-            statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin text-2xl"></i> <span>檔案解析與雲端同步中...</span>';
-
+        // --- 每日紀錄匯入 (保留原有邏輯) ---
+        document.getElementById('excel-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0]; if (!file) return; const customerName = document.getElementById('input-customer-name').value.trim(); const userWidthSpec = document.getElementById('input-width-spec').value.trim();
+            if (!customerName || !userWidthSpec) { window.showAppMessage("提醒", "請先輸入客戶名稱與寬幅！", "warning"); e.target.value = ''; return; }
+            const statusDiv = document.getElementById('import-status'); statusDiv.classList.remove('hidden'); statusDiv.className = "mt-8 w-full max-w-md p-4 rounded-lg flex items-center justify-center space-x-3 bg-blue-50 text-blue-700 font-bold"; statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin text-2xl"></i> <span>檔案解析與雲端同步中...</span>';
             const reader = new FileReader();
             reader.onload = function(evt) {
                 try {
-                    const data = new Uint8Array(evt.target.result);
-                    const workbook = XLSX.read(data, {type: 'array'});
+                    const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type: 'array'});
                     const jsonRaw = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1});
-                    
                     const extractedDataArray = extractDataFromExcel(file.name, jsonRaw);
-                    
-                    extractedDataArray.forEach(d => {
-                        d.widthSpec = userWidthSpec; d.customer = customerName;
-                        if(window.saveRecordToFirebase) window.saveRecordToFirebase(d);
-                        
-                        const existingIndex = window.importedDatabase.findIndex(r => r.id === d.id);
-                        if (existingIndex > -1) window.importedDatabase[existingIndex] = d;
-                        else window.importedDatabase.push(d);
-                    });
-                    
+                    extractedDataArray.forEach(d => { d.widthSpec = userWidthSpec; d.customer = customerName; if(window.saveRecordToFirebase) window.saveRecordToFirebase(d); const existingIndex = window.importedDatabase.findIndex(r => r.id === d.id); if (existingIndex > -1) window.importedDatabase[existingIndex] = d; else window.importedDatabase.push(d); });
                     window.importedDatabase.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
+                    setTimeout(() => { e.target.value = ''; statusDiv.className = "mt-8 w-full max-w-md p-4 rounded-lg flex items-center justify-center bg-green-50 text-green-700 font-bold"; statusDiv.innerHTML = `<i class="fas fa-check-circle text-2xl mr-2"></i>匯入成功！`; document.getElementById('input-customer-name').value = ''; document.getElementById('input-width-spec').value = ''; if (window.isFirebaseLoaded) renderOverview(); updateDatalists(); }, 800);
+                } catch (error) { console.error(error); statusDiv.className = "mt-8 w-full max-w-md p-4 bg-red-50 text-red-700 font-bold flex justify-center"; statusDiv.innerHTML = `解析失敗。`; }
+            }; reader.readAsArrayBuffer(file);
+        });
 
-                    setTimeout(() => {
-                        e.target.value = '';
-                        statusDiv.className = "mt-8 w-full max-w-md p-4 rounded-lg flex items-center justify-center space-x-3 bg-green-50 border border-green-200 text-green-700 font-bold";
-                        statusDiv.innerHTML = `<i class="fas fa-check-circle text-2xl"></i> <span>匯入成功！共新增 ${extractedDataArray.length} 筆時段紀錄。</span>`;
-                        
-                        document.getElementById('input-customer-name').value = '';
-                        document.getElementById('input-width-spec').value = '';
-
-                        // 匯入完成不再強迫跳轉，只做單純匯入。
-                        if (typeof renderOverview === 'function' && window.isFirebaseLoaded) renderOverview();
-                        if (typeof updateDatalists === 'function') updateDatalists();
-
-                    }, 800);
-                } catch (error) {
-                    console.error("解析失敗:", error);
-                    statusDiv.className = "mt-8 w-full max-w-md p-4 rounded-lg flex items-center justify-center space-x-3 bg-red-50 border border-red-200 text-red-700 font-bold";
-                    statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle text-2xl"></i> <span>解析失敗，請確認檔案格式正確。</span>`;
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        // 沿用已寫好的精準 Excel 解析
         function extractDataFromExcel(filename, jsonRaw) {
-            let dateMatch = filename.match(/(\d{4})(\d{2})(\d{2})/);
-            let dateStr = dateMatch ? `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}` : new Date().toISOString().split('T')[0];
-            let lineStr = 'A'; 
-            
-            // 從檔名做初步猜測 (如果有 -A, -B, -C, -1, -2, -3)
-            let lineMatch = filename.match(/[-_]([A-C1-3])/i);
-            if (lineMatch) lineStr = lineMatch[1].toUpperCase();
-
-            let remarksText = ""; let modelName = "未識別"; 
-            let specs = { dieWidth: '--', fullWidth: '--', exhaustPressure: '--' };
-
-            // 輔助函數：往右尋找下一個非空白儲存格
-            const getNextCell = (row, index) => {
-                for(let i = index + 1; i < row.length; i++) {
-                    if (row[i] !== undefined && row[i] !== null && String(row[i]).trim() !== '') return String(row[i]).trim();
-                }
-                return null;
-            };
-
-            // 強化 Metadata 解析，搜尋前 25 列
+            let dateMatch = filename.match(/(\d{4})(\d{2})(\d{2})/); let dateStr = dateMatch ? `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}` : new Date().toISOString().split('T')[0];
+            let lineStr = 'A'; let lineMatch = filename.match(/[-_]([A-C1-3])/i); if (lineMatch) lineStr = lineMatch[1].toUpperCase();
+            let remarksText = ""; let modelName = "未識別"; let specs = { dieWidth: '--', fullWidth: '--', exhaustPressure: '--' };
+            const getNextCell = (row, index) => { for(let i = index + 1; i < row.length; i++) { if (row[i] !== undefined && row[i] !== null && String(row[i]).trim() !== '') return String(row[i]).trim(); } return null; };
             for (let i = 0; i < Math.min(25, jsonRaw.length); i++) {
-                let row = jsonRaw[i];
-                if (!row) continue;
-                
+                let row = jsonRaw[i]; if (!row) continue;
                 for (let j = 0; j < row.length; j++) {
-                    let cellStr = String(row[j] || '').trim();
-                    let cleanCell = cellStr.replace(/\s+/g, '').toUpperCase(); // 轉大寫去空白
-                    if (!cleanCell) continue;
-
-                    // 產線別擷取 (支援相鄰儲存格或同一格)
-                    if (/^(產線別|產線|機台|線別|機台別)$/.test(cleanCell)) {
-                        let val = getNextCell(row, j);
-                        if (val) lineStr = val.replace(/線$/, '').toUpperCase();
-                    } else if (/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/.test(cleanCell)) {
-                        lineStr = cleanCell.match(/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/)[1].replace(/線$/, '').toUpperCase();
-                    }
-
-                    // 型號擷取
-                    if (/^(型號|產品型號)$/.test(cleanCell)) {
-                        let val = getNextCell(row, j);
-                        if (val) modelName = val;
-                    } else if (/^(?:型號|產品型號)[：:]+(.+)$/.test(cleanCell)) {
-                        modelName = cleanCell.match(/^(?:型號|產品型號)[：:]+(.+)$/)[1];
-                    }
-
-                    // 膜頭寬擷取
-                    if (/^(膜頭寬|膜頭寬度)$/.test(cleanCell)) {
-                        let val = getNextCell(row, j);
-                        if (val) specs.dieWidth = val;
-                    } else if (/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/.test(cleanCell)) {
-                        specs.dieWidth = cleanCell.match(/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/)[1];
-                    }
-
-                    // 全膜寬擷取
-                    if (/^(全膜寬|全膜寬度)$/.test(cleanCell)) {
-                        let val = getNextCell(row, j);
-                        if (val) specs.fullWidth = val;
-                    } else if (/^(?:全膜寬|全膜寬度)[：:]+(.+)$/.test(cleanCell)) {
-                        specs.fullWidth = cleanCell.match(/^(?:全膜寬|全膜寬度)[：:]+(.+)$/)[1];
-                    }
-
-                    // 排氣輪壓力擷取
-                    if (/^(排氣輪壓力)$/.test(cleanCell)) {
-                        let val = getNextCell(row, j);
-                        if (val) specs.exhaustPressure = val;
-                    } else if (/^(?:排氣輪壓力)[：:]+(.+)$/.test(cleanCell)) {
-                        specs.exhaustPressure = cleanCell.match(/^(?:排氣輪壓力)[：:]+(.+)$/)[1];
-                    }
+                    let cleanCell = String(row[j] || '').trim().replace(/\s+/g, '').toUpperCase(); if (!cleanCell) continue;
+                    if (/^(產線別|產線|機台|線別|機台別)$/.test(cleanCell)) { let val = getNextCell(row, j); if (val) lineStr = val.replace(/線$/, '').toUpperCase(); } else if (/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/.test(cleanCell)) { lineStr = cleanCell.match(/^(?:產線別|產線|機台|線別|機台別)[：:]+(.+)$/)[1].replace(/線$/, '').toUpperCase(); }
+                    if (/^(型號|產品型號)$/.test(cleanCell)) { let val = getNextCell(row, j); if (val) modelName = val; } else if (/^(?:型號|產品型號)[：:]+(.+)$/.test(cleanCell)) { modelName = cleanCell.match(/^(?:型號|產品型號)[：:]+(.+)$/)[1]; }
+                    if (/^(膜頭寬|膜頭寬度)$/.test(cleanCell)) { let val = getNextCell(row, j); if (val) specs.dieWidth = val; } else if (/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/.test(cleanCell)) { specs.dieWidth = cleanCell.match(/^(?:膜頭寬|膜頭寬度)[：:]+(.+)$/)[1]; }
+                    if (/^(全膜寬|全膜寬度)$/.test(cleanCell)) { let val = getNextCell(row, j); if (val) specs.fullWidth = val; } else if (/^(?:全膜寬|全膜寬度)[：:]+(.+)$/.test(cleanCell)) { specs.fullWidth = cleanCell.match(/^(?:全膜寬|全膜寬度)[：:]+(.+)$/)[1]; }
+                    if (/^(排氣輪壓力)$/.test(cleanCell)) { let val = getNextCell(row, j); if (val) specs.exhaustPressure = val; } else if (/^(?:排氣輪壓力)[：:]+(.+)$/.test(cleanCell)) { specs.exhaustPressure = cleanCell.match(/^(?:排氣輪壓力)[：:]+(.+)$/)[1]; }
                 }
-                
-                // 暴力字串比對備援 (防止儲存格分割異常，強迫整列搜尋產線關鍵字)
-                let rowStr = row.map(cell => cell ? String(cell).trim() : '').join('');
-                let cleanStr = rowStr.replace(/\s+/g, '').toUpperCase();
-                if (cleanStr.includes('產線') || cleanStr.includes('機台') || cleanStr.includes('線別')) {
-                    if (['3', '三', 'C', 'Ｃ', '３'].some(k => cleanStr.includes(k))) lineStr = '3';
-                }
+                let cleanStr = row.map(c => c ? String(c).trim() : '').join('').replace(/\s+/g, '').toUpperCase(); if (cleanStr.includes('產線') || cleanStr.includes('機台') || cleanStr.includes('線別')) { if (['3', '三', 'C', 'Ｃ', '３'].some(k => cleanStr.includes(k))) lineStr = '3'; }
             }
-            
-            // 確保統一轉換為 3 (防呆機制)
-            if (lineStr && ['3', '三', 'C', 'Ｃ', '３'].some(k => String(lineStr).includes(k))) {
-                lineStr = '3';
-            }
-
+            if (lineStr && ['3', '三', 'C', 'Ｃ', '３'].some(k => String(lineStr).includes(k))) lineStr = '3';
             let combinedHeaders = []; let maxCols = 0; const searchLimit = Math.min(25, jsonRaw.length);
             for (let i = 0; i < searchLimit; i++) if (jsonRaw[i] && jsonRaw[i].length > maxCols) maxCols = jsonRaw[i].length;
-            for (let c = 0; c < maxCols; c++) {
-                let colStr = "";
-                for (let i = 0; i < searchLimit; i++) if (jsonRaw[i] && jsonRaw[i][c] !== undefined && jsonRaw[i][c] !== null) colStr += String(jsonRaw[i][c]).toLowerCase().replace(/\s/g, '') + "_";
-                combinedHeaders.push(colStr);
-            }
-
+            for (let c = 0; c < maxCols; c++) { let colStr = ""; for (let i = 0; i < searchLimit; i++) if (jsonRaw[i] && jsonRaw[i][c] !== undefined && jsonRaw[i][c] !== null) colStr += String(jsonRaw[i][c]).toLowerCase().replace(/\s/g, '') + "_"; combinedHeaders.push(colStr); }
             const findCol = (kw, rev = false) => { let iter = rev ? [...combinedHeaders].reverse() : combinedHeaders; for (let i = 0; i < iter.length; i++) if (kw.some(k => iter[i].includes(k))) return rev ? combinedHeaders.length - 1 - i : i; return -1; };
-            const colMap = { 
-                time: findCol(['時間', 'time']), back_pressure: findCol(['背壓']), temp: findCol(['溫度', 'temp']), pf_front: findCol(['pf前']), pf_back: findCol(['pf後']), p_diff: findCol(['壓差', '壓力差']), line_speed: findCol(['線速']), 
-                ac_height: findCol(['高度']), ac_dist: findCol(['距離']), ac_tilt: findCol(['傾斜']), ac_pressure: findCol(['風壓']), 
-                w_dra: findCol(['dra']), w_dr1: findCol(['dr1']), w_dr2: findCol(['dr2']), w_crn: findCol(['crn']), 
-                w_swing_amp: findCol(['幅度', '搖擺幅']), w_swing_spd: findCol(['搖擺速']), w_cut_spd: findCol(['切邊']), 
-                w3_flip_cut1: findCol(['翻轉/切斷', '切斷前', '翻轉/']), 
-                w3_flip_cut2: findCol(['切斷後', '新軸', '舊軸']), 
-                w3_cr1: findCol(['cr1', '壓卷', '壓捲']), 
-                w3_cr2: findCol(['cr2', '壓接']),
-                t_thick: findCol(['測厚', '厚度'], true), d_sens: findCol(['感度', '靈敏']), remarks_col: findCol(['備註', '備', '註']) 
-            };
-
-            if (colMap.remarks_col !== -1) {
-                for (let i = 0; i < jsonRaw.length; i++) {
-                    if (jsonRaw[i] && jsonRaw[i][colMap.remarks_col]) {
-                        let text = String(jsonRaw[i][colMap.remarks_col]).trim();
-                        let ignore = ['型號', '膜頭寬', '全膜寬', '比例正確', '路徑正確', '排氣輪', '備註', '製程條件'];
-                        if (!ignore.some(kw => text.includes(kw)) && text.length > 0) remarksText += text + "\n";
-                    }
-                }
-            }
+            const colMap = { time: findCol(['時間', 'time']), back_pressure: findCol(['背壓']), temp: findCol(['溫度', 'temp']), pf_front: findCol(['pf前']), pf_back: findCol(['pf後']), p_diff: findCol(['壓差', '壓力差']), line_speed: findCol(['線速']), ac_height: findCol(['高度']), ac_dist: findCol(['距離']), ac_tilt: findCol(['傾斜']), ac_pressure: findCol(['風壓']), w_dra: findCol(['dra']), w_dr1: findCol(['dr1']), w_dr2: findCol(['dr2']), w_crn: findCol(['crn']), w_swing_amp: findCol(['幅度', '搖擺幅']), w_swing_spd: findCol(['搖擺速']), w_cut_spd: findCol(['切邊']), w3_flip_cut1: findCol(['翻轉/切斷', '切斷前', '翻轉/']), w3_flip_cut2: findCol(['切斷後', '新軸', '舊軸']), w3_cr1: findCol(['cr1', '壓卷', '壓捲']), w3_cr2: findCol(['cr2', '壓接']), t_thick: findCol(['測厚', '厚度'], true), d_sens: findCol(['感度', '靈敏']), remarks_col: findCol(['備註', '備', '註']) };
+            if (colMap.remarks_col !== -1) { for (let i = 0; i < jsonRaw.length; i++) { if (jsonRaw[i] && jsonRaw[i][colMap.remarks_col]) { let text = String(jsonRaw[i][colMap.remarks_col]).trim(); let ignore = ['型號', '膜頭寬', '全膜寬', '比例正確', '路徑正確', '排氣輪', '備註', '製程條件']; if (!ignore.some(kw => text.includes(kw)) && text.length > 0) remarksText += text + "\n"; } } }
             if (!remarksText.trim()) remarksText = "無異常異動備註";
-
             const safeGet = (row, col) => { if (!row || col === -1 || row[col] === undefined || row[col] === '') return '--'; const num = Number(row[col]); return !isNaN(num) ? num.toFixed(1) : row[col]; };
             const parseExcelTime = (val) => { if (!val) return null; if (typeof val === 'number' && val <= 1) { let ts = Math.round(val * 24 * 3600); return `${Math.floor(ts/3600).toString().padStart(2, '0')}:${Math.floor((ts%3600)/60).toString().padStart(2, '0')}`; } let str = String(val).trim(); return /^\d{1,2}:\d{2}/.test(str) ? str : null; };
-
             let records = []; let timeGroups = {}; let lastTime = "08:00"; 
             for (let i = 3; i < jsonRaw.length; i++) { 
                 let row = jsonRaw[i]; if (!row || row.length === 0) continue; 
                 let rowStr = row.join(''); if (rowStr.includes('備註') || rowStr.includes('交班') || rowStr.includes('合計')) break;
-                let tVal = colMap.time !== -1 ? parseExcelTime(row[colMap.time]) : null;
-                if (!tVal) for (let c = 0; c < 3; c++) { let t = parseExcelTime(row[c]); if (t) { tVal = t; break; } }
+                let tVal = colMap.time !== -1 ? parseExcelTime(row[colMap.time]) : null; if (!tVal) for (let c = 0; c < 3; c++) { let t = parseExcelTime(row[c]); if (t) { tVal = t; break; } }
                 if (tVal) lastTime = tVal; let curTime = lastTime;
-
                 let axis = ""; for (let c = 0; c < Math.min(row.length, 5); c++) { let cv = String(row[c] || '').toUpperCase().replace(/\s/g, ''); if (cv.includes('A')) axis = 'A'; else if (cv.includes('B')) axis = 'B'; else if (cv.includes('C')) axis = 'C'; if (axis) break; }
-                
-                // 放寬資料檢查，確保不會因為單一欄位缺失而整列略過
-                let hasData = (colMap.back_pressure !== -1 && row[colMap.back_pressure]) || 
-                              (colMap.w_dra !== -1 && row[colMap.w_dra]) || 
-                              (colMap.w_dr1 !== -1 && row[colMap.w_dr1]) || 
-                              (colMap.w3_flip_cut1 !== -1 && row[colMap.w3_flip_cut1]) || 
-                              (colMap.t_thick !== -1 && row[colMap.t_thick]);
+                let hasData = (colMap.back_pressure !== -1 && row[colMap.back_pressure]) || (colMap.w_dra !== -1 && row[colMap.w_dra]) || (colMap.w_dr1 !== -1 && row[colMap.w_dr1]) || (colMap.t_thick !== -1 && row[colMap.t_thick]);
                 if (!hasData) continue; 
-
                 if (!timeGroups[curTime]) timeGroups[curTime] = { A: null, B: null, C: null, def: null };
-                if (axis === 'A') timeGroups[curTime].A = row; else if (axis === 'B') timeGroups[curTime].B = row; else if (axis === 'C') timeGroups[curTime].C = row;
-                else { if (!timeGroups[curTime].A) timeGroups[curTime].A = row; else if (!timeGroups[curTime].B) timeGroups[curTime].B = row; else if (!timeGroups[curTime].C) timeGroups[curTime].C = row; }
+                if (axis === 'A') timeGroups[curTime].A = row; else if (axis === 'B') timeGroups[curTime].B = row; else if (axis === 'C') timeGroups[curTime].C = row; else { if (!timeGroups[curTime].A) timeGroups[curTime].A = row; else if (!timeGroups[curTime].B) timeGroups[curTime].B = row; else if (!timeGroups[curTime].C) timeGroups[curTime].C = row; }
                 if (!timeGroups[curTime].def) timeGroups[curTime].def = row;
             }
-
             for (let t in timeGroups) {
                 let grp = timeGroups[t]; let def = grp.def || grp.A || grp.B || grp.C; if (!def) continue; 
                 const extGet = (ax) => ({ back_pressure: safeGet(ax, colMap.back_pressure), temp: safeGet(ax, colMap.temp), pf_front: safeGet(ax, colMap.pf_front), pf_back: safeGet(ax, colMap.pf_back), p_diff: safeGet(ax, colMap.p_diff), line_speed: safeGet(ax, colMap.line_speed) });
-                records.push({
-                    id: Date.now() + '_' + Math.random().toString(36).substr(2, 5), filename: filename, date: dateStr, line: lineStr, time: t, remarks: remarksText, model: modelName, specs: specs,
-                    extruder: { A: extGet(grp.A || def), B: extGet(grp.B || def), C: extGet(grp.C || def) },
-                    airchamber: { ac_height: safeGet(def, colMap.ac_height), ac_dist: safeGet(def, colMap.ac_dist), ac_tilt: safeGet(def, colMap.ac_tilt), ac_pressure: safeGet(def, colMap.ac_pressure) },
-                    winder: { 
-                        w_dra: safeGet(def, colMap.w_dra), 
-                        w_dr1: safeGet(def, colMap.w_dr1), 
-                        w_dr2: safeGet(def, colMap.w_dr2), 
-                        w_crn: safeGet(def, colMap.w_crn), 
-                        w_swing_amp: safeGet(def, colMap.w_swing_amp), 
-                        w_swing_spd: safeGet(def, colMap.w_swing_spd), 
-                        w_cut_spd: safeGet(def, colMap.w_cut_spd),
-                        w3_flip_cut1: safeGet(def, colMap.w3_flip_cut1), 
-                        w3_flip_cut2: safeGet(def, colMap.w3_flip_cut2), 
-                        w3_cr1: safeGet(def, colMap.w3_cr1), 
-                        w3_cr2: safeGet(def, colMap.w3_cr2)
-                    },
-                    thickness: { t_thick: safeGet(def, colMap.t_thick) }, detector: { d_sens: safeGet(def, colMap.d_sens) }
-                });
+                records.push({ id: Date.now() + '_' + Math.random().toString(36).substr(2, 5), filename: filename, date: dateStr, line: lineStr, time: t, remarks: remarksText, model: modelName, specs: specs, extruder: { A: extGet(grp.A || def), B: extGet(grp.B || def), C: extGet(grp.C || def) }, airchamber: { ac_height: safeGet(def, colMap.ac_height), ac_dist: safeGet(def, colMap.ac_dist), ac_tilt: safeGet(def, colMap.ac_tilt), ac_pressure: safeGet(def, colMap.ac_pressure) }, winder: { w_dra: safeGet(def, colMap.w_dra), w_dr1: safeGet(def, colMap.w_dr1), w_dr2: safeGet(def, colMap.w_dr2), w_crn: safeGet(def, colMap.w_crn), w_swing_amp: safeGet(def, colMap.w_swing_amp), w_swing_spd: safeGet(def, colMap.w_swing_spd), w_cut_spd: safeGet(def, colMap.w_cut_spd), w3_flip_cut1: safeGet(def, colMap.w3_flip_cut1), w3_flip_cut2: safeGet(def, colMap.w3_flip_cut2), w3_cr1: safeGet(def, colMap.w3_cr1), w3_cr2: safeGet(def, colMap.w3_cr2) }, thickness: { t_thick: safeGet(def, colMap.t_thick) }, detector: { d_sens: safeGet(def, colMap.d_sens) } });
             }
             return records;
         }
 
+        // --- 總覽列表邏輯 ---
         function renderOverview() {
-            const container = document.getElementById('overview-container');
-            const searchText = document.getElementById('overview-search').value.toLowerCase().trim();
-            
-            if (!window.importedDatabase || window.importedDatabase.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center py-10 text-gray-500 bg-gray-50 rounded-lg border border-gray-200">
-                        <i class="fas fa-folder-open text-4xl mb-3 text-gray-300 block"></i>
-                        <p class="text-lg font-medium">目前尚無歷史資料。</p>
-                        <p class="text-sm mt-1">請前往「每日資料匯入」載入 Excel 檔案以建立資料庫。</p>
-                    </div>`;
-                return;
-            }
-
-            let filteredData = window.importedDatabase;
-            if (searchText) filteredData = filteredData.filter(d => (d.model && d.model.toLowerCase().includes(searchText)) || (d.customer && d.customer.toLowerCase().includes(searchText)));
-
-            if (filteredData.length === 0) {
-                container.innerHTML = `<div class="p-6 text-center text-gray-500 bg-gray-50 rounded-lg">找不到符合的資料。</div>`; return;
-            }
-
-            // 改為依據「型號」與「寬幅」進行雙重分組
-            const groupedByModelWidth = {};
-            filteredData.forEach(record => {
-                const key = `${record.model}___${record.widthSpec}`;
-                if (!groupedByModelWidth[key]) groupedByModelWidth[key] = { model: record.model, widthSpec: record.widthSpec, customer: record.customer || '未指定', dates: {} };
-                if (!groupedByModelWidth[key].dates[record.date]) groupedByModelWidth[key].dates[record.date] = [];
-                groupedByModelWidth[key].dates[record.date].push(record);
-            });
-
-            let html = '';
-            let counter = 0;
-            for (const key in groupedByModelWidth) {
-                const md = groupedByModelWidth[key];
-                const dateCount = Object.keys(md.dates).length;
-                const safeKey = 'grp_' + counter++;
-                
-                html += `
-                <div class="border border-gray-200 rounded-lg overflow-hidden bg-white mb-4 shadow-sm transition hover:shadow-md">
-                    <div class="bg-gray-50 px-5 py-4 flex justify-between items-center cursor-pointer border-b border-gray-200" onclick="toggleOverviewModel('${safeKey}')">
-                        <div class="flex items-center space-x-4">
-                            <i id="icon-model-${safeKey}" class="fas fa-chevron-right text-gray-400 transition-transform w-4"></i>
-                            <div>
-                                <h3 class="text-lg font-bold text-blue-800">${md.model} <span class="text-sm font-bold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded ml-2">寬幅: ${md.widthSpec}</span></h3>
-                                <div class="text-sm text-gray-500 mt-1 flex items-center space-x-3">
-                                    <span><i class="fas fa-user-tag mr-1"></i>${md.customer}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-bold">共 ${dateCount} 天紀錄</div>
-                    </div>
-                    
-                    <div id="content-model-${safeKey}" class="hidden flex-col">
-                        <div class="p-4 bg-white">`;
-
+            const container = document.getElementById('overview-container'); const searchText = document.getElementById('overview-search').value.toLowerCase().trim();
+            if (!window.importedDatabase || window.importedDatabase.length === 0) { container.innerHTML = `<div class="text-center py-10 text-gray-500 bg-gray-50 rounded-lg"><p>尚無歷史資料。</p></div>`; return; }
+            let filteredData = window.importedDatabase; if (searchText) filteredData = filteredData.filter(d => (d.model && d.model.toLowerCase().includes(searchText)) || (d.customer && d.customer.toLowerCase().includes(searchText)));
+            if (filteredData.length === 0) { container.innerHTML = `<div class="p-6 text-center text-gray-500 bg-gray-50 rounded-lg">找不到資料。</div>`; return; }
+            const grouped = {}; filteredData.forEach(r => { const key = `${r.model}___${r.widthSpec}`; if (!grouped[key]) grouped[key] = { model: r.model, widthSpec: r.widthSpec, customer: r.customer, dates: {} }; if (!grouped[key].dates[r.date]) grouped[key].dates[r.date] = []; grouped[key].dates[r.date].push(r); });
+            let html = ''; let counter = 0;
+            for (const key in grouped) {
+                const md = grouped[key]; const safeKey = 'grp_' + counter++;
+                html += `<div class="border rounded-lg bg-white mb-4 shadow-sm"><div class="bg-gray-50 px-5 py-4 flex justify-between cursor-pointer border-b" onclick="toggleOverviewModel('${safeKey}')"><div class="flex items-center space-x-4"><i id="icon-model-${safeKey}" class="fas fa-chevron-right text-gray-400 w-4"></i><div><h3 class="text-lg font-bold text-blue-800">${md.model} <span class="text-sm font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded ml-2">寬幅: ${md.widthSpec}</span></h3><div class="text-sm text-gray-500 mt-1">${md.customer}</div></div></div><div class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-bold">共 ${Object.keys(md.dates).length} 天</div></div><div id="content-model-${safeKey}" class="hidden flex-col"><div class="p-4 bg-white">`;
                 const sortedDates = Object.keys(md.dates).sort((a, b) => new Date(b) - new Date(a));
                 sortedDates.forEach(date => {
-                    const recordsForDate = md.dates[date];
-                    recordsForDate.sort((a, b) => new Date('1970/01/01 ' + a.time) - new Date('1970/01/01 ' + b.time));
-                    
-                    html += `
-                        <div class="mb-4 last:mb-0 border border-gray-100 rounded-md overflow-hidden">
-                            <div class="bg-indigo-50 px-4 py-2 border-b border-indigo-100 flex justify-between items-center">
-                                <span class="font-bold text-indigo-800"><i class="far fa-calendar-alt mr-2"></i>${date}</span>
-                                <div class="flex items-center space-x-3">
-                                    <span class="text-xs text-indigo-500 bg-white px-2 py-0.5 rounded border border-indigo-200">${recordsForDate.length} 筆時段</span>
-                                    <button onclick="promptDeleteDate('${md.model}', '${md.widthSpec}', '${date}')" class="text-red-400 hover:text-red-600 transition" title="刪除此日期的所有匯入紀錄"><i class="fas fa-trash-alt"></i></button>
-                                </div>
-                            </div>
-                            <div class="p-3 bg-white flex flex-wrap gap-2">`;
-
-                    recordsForDate.forEach(record => {
-                        html += `
-                            <button onclick="viewHistoricalRecord('${record.id}')" class="flex items-center space-x-2 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-300 rounded px-3 py-1.5 transition text-sm shadow-sm" title="點擊查看詳細比對">
-                                <span class="font-semibold text-gray-700">${record.time}</span>
-                                <span class="text-xs bg-slate-200 text-slate-700 px-1 rounded">${record.line}線</span>
-                            </button>`;
-                    });
+                    const records = md.dates[date].sort((a, b) => new Date('1970/01/01 ' + a.time) - new Date('1970/01/01 ' + b.time));
+                    html += `<div class="mb-4 border rounded-md overflow-hidden"><div class="bg-indigo-50 px-4 py-2 border-b flex justify-between"><span class="font-bold text-indigo-800">${date}</span><div class="flex items-center space-x-3"><span class="text-xs text-indigo-500 bg-white px-2 py-0.5 rounded">${records.length} 筆</span><button onclick="promptDeleteDate('${md.model}', '${md.widthSpec}', '${date}')" class="text-red-400 hover:text-red-600"><i class="fas fa-trash-alt"></i></button></div></div><div class="p-3 bg-white flex flex-wrap gap-2">`;
+                    records.forEach(r => { html += `<button onclick="viewHistoricalRecord('${r.id}')" class="flex items-center space-x-2 bg-gray-50 hover:bg-blue-50 border rounded px-3 py-1.5 transition text-sm shadow-sm"><span class="font-semibold text-gray-700">${r.time}</span><span class="text-xs bg-slate-200 px-1 rounded">${r.line}線</span></button>`; });
                     html += `</div></div>`;
                 });
-
-                html += `
-                        </div>
-                        <div class="bg-gray-50 px-4 py-3 border-t border-gray-200 flex justify-end space-x-3">
-                            <button onclick="openBatchModalForModel('${md.model}', '${md.widthSpec}')" class="text-sm bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-bold py-1.5 px-4 rounded shadow-sm transition">
-                                <i class="fas fa-check-square mr-1"></i> 勾選比對 (最多5筆)
-                            </button>
-                            <button onclick="crossDayBatchCompare('${md.model}', '${md.widthSpec}')" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-4 rounded shadow transition">
-                                <i class="fas fa-bolt mr-1"></i> 快速比對 (最近5筆)
-                            </button>
-                        </div>
-                    </div>
-                </div>`;
+                html += `</div><div class="bg-gray-50 px-4 py-3 border-t flex justify-end space-x-3"><button onclick="openBatchModalForModel('${md.model}', '${md.widthSpec}')" class="text-sm bg-white border text-indigo-700 px-4 py-1.5 rounded shadow-sm">勾選比對</button><button onclick="crossDayBatchCompare('${md.model}', '${md.widthSpec}')" class="text-sm bg-indigo-600 text-white font-bold py-1.5 px-4 rounded shadow">快速比對</button></div></div></div>`;
             }
-            
             container.innerHTML = html;
         }
 
-        function toggleOverviewModel(model) {
-            const content = document.getElementById(`content-model-${model}`);
-            const icon = document.getElementById(`icon-model-${model}`);
-            content.classList.toggle('hidden'); content.classList.toggle('flex');
-            if(content.classList.contains('hidden')) { icon.classList.remove('fa-chevron-down'); icon.classList.add('fa-chevron-right'); }
-            else { icon.classList.remove('fa-chevron-right'); icon.classList.add('fa-chevron-down'); }
-        }
+        function toggleOverviewModel(sKey) { const c = document.getElementById(`content-model-${sKey}`); const i = document.getElementById(`icon-model-${sKey}`); c.classList.toggle('hidden'); c.classList.toggle('flex'); if(c.classList.contains('hidden')) { i.classList.remove('fa-chevron-down'); i.classList.add('fa-chevron-right'); } else { i.classList.remove('fa-chevron-right'); i.classList.add('fa-chevron-down'); } }
+        function viewHistoricalRecord(rId) { const r = window.importedDatabase.find(r => r.id === rId); if(r) renderSingleDashboard(r); }
+        function findPreviousRecord(cRec) { const v = window.importedDatabase.filter(d => d.line === cRec.line && d.model === cRec.model && d.widthSpec === cRec.widthSpec && (new Date(d.date + 'T' + d.time) < new Date(cRec.date + 'T' + cRec.time))).sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time)); return v.length > 0 ? v[v.length - 1] : null; }
 
-        function viewHistoricalRecord(recordId) {
-            const record = window.importedDatabase.find(r => r.id === recordId);
-            if(record) renderSingleDashboard(record);
-        }
+        function generateTableHTML(sec, pData, cData, line = null) { let html = ''; let s = configSchema[sec]; if (sec === 'winder' && line && (line === '3' || line === '三' || line === 'C')) s = configSchema.winder_line3; s.forEach(item => { const pVal = pData ? pData[item.id] : '--'; const cVal = cData[item.id]; const diff = pData && pVal !== '--' ? checkIsDifferent(pVal, cVal) : false; html += `<tr class="border-b"><td class="px-3 py-2 bg-gray-50 border-r">${item.name}</td><td class="px-3 py-2 text-right text-gray-500 border-r">${pVal}</td><td class="px-3 py-2 text-right bg-blue-50"><span class="${diff ? 'diff-blink px-2 py-0.5 inline-block font-bold' : 'text-blue-800 font-semibold'}">${cVal}</span></td></tr>`; }); return html; }
+        function generateExtruderTableHTML(pData, cData) { let html = ''; configSchema.extruder.forEach(item => { html += `<tr class="border-b"><td class="px-3 py-2 bg-gray-50 border-r sticky left-0 z-10 font-bold">${item.name}</td><td class="px-2 py-2 text-center bg-gray-50 border-r">${item.standard||'-'}</td>`; ['A','B','C'].forEach(ax => { html += `<td class="px-2 py-2 text-center border-r">${pData ? pData[ax][item.id] : '--'}</td>`; }); ['A','B','C'].forEach(ax => { const pV = pData ? pData[ax][item.id] : '--'; const cV = cData[ax][item.id]; const diff = pData && pV !== '--' ? checkIsDifferent(pV, cV) : false; html += `<td class="px-2 py-2 text-center bg-blue-50 border-r"><span class="${diff ? 'diff-blink px-1 py-0.5 inline-block font-bold' : 'text-blue-800 font-semibold'}">${cV}</span></td>`; }); html += `</tr>`; }); return html; }
 
-        function generateTableHTML(section, prevData, currData, line = null) {
-            let html = '';
-            let schema = configSchema[section];
+        function updateTrendChart(pId, tLine, tModel) { const ctx = document.getElementById('trendChart').getContext('2d'); const pInfo = configSchema.extruder.find(p => p.id === pId); const cData = window.importedDatabase.filter(d => d.line === tLine && d.model === tModel); if (trendChartInstance) trendChartInstance.destroy(); if (cData.length === 0) return; const pVal = (v) => { if (!v || v === '--') return null; const m = String(v).match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : null; }; trendChartInstance = new Chart(ctx, { type: 'line', data: { labels: cData.map(d => `${d.date.slice(5)} ${d.time}`), datasets: [ { label: 'A軸', data: cData.map(d => pVal(d.extruder.A[pId])), borderColor: '#ef4444', backgroundColor: '#ef4444' }, { label: 'B軸', data: cData.map(d => pVal(d.extruder.B[pId])), borderColor: '#3b82f6', backgroundColor: '#3b82f6' }, { label: 'C軸', data: cData.map(d => pVal(d.extruder.C[pId])), borderColor: '#10b981', backgroundColor: '#10b981' } ] }, options: { responsive: true, maintainAspectRatio: false } }); }
+
+        function renderSingleDashboard(nRec) {
+            currentViewedRecordId = nRec.id; document.getElementById('overview-list-view').classList.add('hidden'); document.getElementById('dashboard-container').classList.remove('hidden'); document.getElementById('dashboard-container').classList.add('flex');
+            const pRec = findPreviousRecord(nRec);
+            document.getElementById('info-customer').textContent = nRec.customer; document.getElementById('info-date').textContent = `${nRec.date} ${nRec.time}`; document.getElementById('info-line').textContent = `${nRec.line} 線`; document.getElementById('info-model').textContent = nRec.model; document.getElementById('info-width-spec').textContent = nRec.widthSpec; document.getElementById('info-remarks').textContent = nRec.remarks; document.getElementById('spec-die-width').textContent = nRec.specs.dieWidth || '--'; document.getElementById('spec-full-width').textContent = nRec.specs.fullWidth || '--'; document.getElementById('spec-exhaust-pressure').textContent = nRec.specs.exhaustPressure || '--';
+            document.getElementById('info-prev-time').textContent = pRec ? `${pRec.date} ${pRec.time}` : "無 (首次)"; document.getElementById('info-prev-time').className = pRec ? "text-sm font-bold text-green-700 bg-green-100 px-2 rounded ml-2" : "text-sm font-bold text-red-600 bg-red-50 px-2 rounded ml-2";
             
-            // 判斷是否為產線三，動態切換 Winder Schema
-            if (section === 'winder' && line && (line === '3' || line === '三' || line === 'C')) {
-                schema = configSchema.winder_line3;
+            let diffs = [];
+            if (pRec) {
+                configSchema.extruder.forEach(item => { ['A', 'B', 'C'].forEach(ax => { let p = pRec.extruder[ax][item.id]; let c = nRec.extruder[ax][item.id]; if (p !== '--' && checkIsDifferent(p, c)) diffs.push({ sec: `押出機 (${ax}軸)`, name: item.name, p: p, c: c }); }); });
+                ['airchamber', 'winder', 'thickness', 'detector', 'specs'].forEach(sec => { let sName = sec === 'winder' ? 'Winder' : sec; let s = configSchema[sec]; if (sec === 'winder' && (nRec.line === '3' || nRec.line === 'C')) s = configSchema.winder_line3; if (s) { s.forEach(item => { let p = pRec[sec][item.id]; let c = nRec[sec][item.id]; if (p !== '--' && checkIsDifferent(p, c)) diffs.push({ sec: sName, name: item.name, p: p, c: c }); }); } });
             }
-
-            schema.forEach(item => {
-                const prevVal = prevData ? prevData[item.id] : '--';
-                const currVal = currData[item.id];
-                
-                const isDifferent = prevData && prevVal !== '--' ? checkIsDifferent(prevVal, currVal) : false;
-                const diffClass = isDifferent ? 'diff-blink px-2 py-0.5 inline-block font-bold text-base' : 'text-blue-800 font-semibold';
-                const statusText = !isDifferent && prevData && prevVal !== '--' ? '<span class="text-xs text-gray-400 ml-2 font-normal">(一致)</span>' : '';
-
-                html += `
-                    <tr class="hover:bg-gray-50 transition border-b border-gray-100">
-                        <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900 border-r bg-gray-50">${item.name} ${item.standard ? `<span class="text-xs text-gray-400 ml-1">(${item.standard})</span>` : ''}</td>
-                        <td class="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-500 border-r">${prevVal}</td>
-                        <td class="px-3 py-2 whitespace-nowrap text-sm text-right bg-blue-50"><span class="${diffClass}">${currVal}</span>${statusText}</td>
-                    </tr>`;
-            });
-            return html;
-        }
-
-        function generateExtruderTableHTML(prevData, currData) {
-            let html = '';
-            const axes = ['A', 'B', 'C'];
-            configSchema.extruder.forEach(item => {
-                html += `<tr class="hover:bg-gray-50 transition border-b border-gray-200">`;
-                html += `<td class="px-3 py-2 whitespace-nowrap text-sm font-bold text-gray-800 border-r bg-gray-50 sticky left-0 z-10">${item.name}</td>`;
-                html += `<td class="px-2 py-2 whitespace-nowrap text-sm text-center text-gray-500 border-r bg-gray-50">${item.standard || '-'}</td>`;
-                
-                axes.forEach(axis => {
-                    const val = prevData ? prevData[axis][item.id] : '--';
-                    const bClass = axis === 'C' ? 'border-r' : '';
-                    html += `<td class="px-2 py-2 whitespace-nowrap text-sm text-center text-gray-500 bg-white ${bClass}">${val}</td>`;
-                });
-
-                axes.forEach(axis => {
-                    const prevVal = prevData ? prevData[axis][item.id] : '--';
-                    const currVal = currData[axis][item.id];
-                    const isDifferent = prevData && prevVal !== '--' ? checkIsDifferent(prevVal, currVal) : false;
-                    const diffClass = isDifferent ? 'diff-blink px-1 py-0.5 inline-block font-bold text-base' : 'text-blue-800 font-semibold';
-                    const bClass = axis === 'A' ? 'border-l border-blue-200' : '';
-                    html += `<td class="px-2 py-2 whitespace-nowrap text-sm text-center bg-blue-50 ${bClass}"><span class="${diffClass}">${currVal}</span></td>`;
-                });
-                html += `</tr>`;
-            });
-            return html;
-        }
-
-        function updateTrendChart(paramId, targetLine, targetModel) {
-            const ctx = document.getElementById('trendChart').getContext('2d');
-            const paramInfo = configSchema.extruder.find(p => p.id === paramId);
-            const chartData = window.importedDatabase.filter(d => d.line === targetLine && d.model === targetModel);
+            if (diffs.length > 0) { document.getElementById('alert-model').textContent = nRec.model; document.getElementById('diff-alert-body').innerHTML = diffs.map(d => `<tr class="border-b"><td class="px-4 py-3 font-bold">${d.sec}</td><td class="px-4 py-3 font-bold">${d.name}</td><td class="px-4 py-3 text-center">${d.p}</td><td class="px-4 py-3 text-center"><span class="diff-blink px-2 py-1 font-bold inline-block">${d.c}</span></td></tr>`).join(''); document.getElementById('diff-alert-modal').classList.remove('hidden'); }
             
-            if (trendChartInstance) trendChartInstance.destroy();
-            if (chartData.length === 0) return;
-
-            const parseChartVal = (val) => { if (!val || val === '--') return null; const match = String(val).match(/-?\d+(\.\d+)?/); return match ? Number(match[0]) : null; };
-
-            trendChartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: chartData.map(d => `${d.date.slice(5)} ${d.time}`),
-                    datasets: [
-                        { label: `A軸`, data: chartData.map(d => parseChartVal(d.extruder.A[paramId])), borderColor: '#ef4444', backgroundColor: '#ef4444', borderWidth: 2, pointRadius: 4, tension: 0.1 },
-                        { label: `B軸`, data: chartData.map(d => parseChartVal(d.extruder.B[paramId])), borderColor: '#3b82f6', backgroundColor: '#3b82f6', borderWidth: 2, pointRadius: 4, tension: 0.1 },
-                        { label: `C軸`, data: chartData.map(d => parseChartVal(d.extruder.C[paramId])), borderColor: '#10b981', backgroundColor: '#10b981', borderWidth: 2, pointRadius: 4, tension: 0.1 }
-                    ]
-                },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'top' }, title: { display: true, text: `歷史趨勢：${paramInfo.name}` } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#e2e8f0' } } } }
-            });
+            document.getElementById('table-extruder').innerHTML = generateExtruderTableHTML(pRec?.extruder, nRec.extruder); document.getElementById('table-airchamber').innerHTML = generateTableHTML('airchamber', pRec?.airchamber, nRec.airchamber); document.getElementById('table-winder').innerHTML = generateTableHTML('winder', pRec?.winder, nRec.winder, nRec.line); document.getElementById('table-thickness').innerHTML = generateTableHTML('thickness', pRec?.thickness, nRec.thickness); document.getElementById('table-detector').innerHTML = generateTableHTML('detector', pRec?.detector, nRec.detector);
+            const selParam = document.getElementById('chart-param-select').value; updateTrendChart(selParam, nRec.line, nRec.model); document.getElementById('chart-param-select').dataset.currentLine = nRec.line; document.getElementById('chart-param-select').dataset.currentModel = nRec.model;
         }
 
-        function renderSingleDashboard(newRecord) {
-            currentViewedRecordId = newRecord.id;
-            document.getElementById('overview-list-view').classList.add('hidden');
-            document.getElementById('batch-dashboard-container').classList.add('hidden');
-            const dash = document.getElementById('dashboard-container');
-            dash.classList.remove('hidden'); dash.classList.add('flex');
-            
-            const previousRecord = findPreviousRecord(newRecord);
-
-            document.getElementById('info-customer').textContent = newRecord.customer;
-            document.getElementById('info-date').textContent = `${newRecord.date} ${newRecord.time}`;
-            document.getElementById('info-line').textContent = `${newRecord.line} 線`;
-            document.getElementById('info-model').textContent = newRecord.model;
-            document.getElementById('info-width-spec').textContent = newRecord.widthSpec;
-            document.getElementById('info-remarks').textContent = newRecord.remarks;
-            document.getElementById('spec-die-width').textContent = newRecord.specs.dieWidth || '--';
-            document.getElementById('spec-full-width').textContent = newRecord.specs.fullWidth || '--';
-            document.getElementById('spec-exhaust-pressure').textContent = newRecord.specs.exhaustPressure || '--';
-            
-            if (previousRecord) {
-                document.getElementById('info-prev-time').textContent = `${previousRecord.date} ${previousRecord.time}`;
-                document.getElementById('info-prev-time').className = "text-sm font-bold text-green-700 bg-green-100 px-2 py-1 rounded shadow-sm border border-green-200 ml-2";
-            } else {
-                document.getElementById('info-prev-time').textContent = "無 (首次匯入)";
-                document.getElementById('info-prev-time').className = "text-sm font-bold text-red-600 bg-red-50 px-2 py-1 rounded shadow-sm border border-red-200 ml-2";
-            }
-
-            let differences = [];
-            if (previousRecord) {
-                configSchema.extruder.forEach(item => {
-                    ['A', 'B', 'C'].forEach(axis => {
-                        let prev = previousRecord.extruder[axis][item.id];
-                        let curr = newRecord.extruder[axis][item.id];
-                        if (prev !== '--' && checkIsDifferent(prev, curr)) differences.push({ section: `押出機 (${axis}軸)`, name: item.name, prev: prev, curr: curr });
-                    });
-                });
-                ['airchamber', 'winder', 'thickness', 'detector', 'specs'].forEach(sec => {
-                    let secName = sec === 'winder' ? 'Winder (收捲機)' : (sec === 'specs' ? '規格參數' : sec);
-                    let schema = configSchema[sec];
-                    
-                    if (sec === 'winder' && (newRecord.line === '3' || newRecord.line === '三' || newRecord.line === 'C')) {
-                        schema = configSchema.winder_line3;
-                    }
-
-                    if (schema) {
-                        schema.forEach(item => {
-                            let prev = previousRecord[sec][item.id]; let curr = newRecord[sec][item.id];
-                            if (prev !== '--' && checkIsDifferent(prev, curr)) differences.push({ section: secName, name: item.name, prev: prev, curr: curr });
-                        });
-                    }
-                });
-            }
-
-            if (differences.length > 0) {
-                document.getElementById('alert-model').textContent = newRecord.model;
-                let tbody = document.getElementById('diff-alert-body');
-                tbody.innerHTML = differences.map(diff => `
-                    <tr class="${diff.section.includes('Winder') ? 'bg-red-50' : 'hover:bg-gray-50'} border-b">
-                        <td class="px-4 py-3 font-bold text-gray-800">${diff.section}</td><td class="px-4 py-3 font-bold text-gray-800">${diff.name}</td>
-                        <td class="px-4 py-3 text-center text-gray-500 font-medium">${diff.prev}</td><td class="px-4 py-3 text-center"><span class="diff-blink px-2 py-1 inline-block text-lg font-bold">${diff.curr}</span></td>
-                    </tr>`).join('');
-                document.getElementById('diff-alert-modal').classList.remove('hidden');
-            }
-
-            document.getElementById('table-extruder').innerHTML = generateExtruderTableHTML(previousRecord?.extruder, newRecord.extruder);
-            document.getElementById('table-airchamber').innerHTML = generateTableHTML('airchamber', previousRecord?.airchamber, newRecord.airchamber);
-            document.getElementById('table-winder').innerHTML = generateTableHTML('winder', previousRecord?.winder, newRecord.winder, newRecord.line);
-            document.getElementById('table-thickness').innerHTML = generateTableHTML('thickness', previousRecord?.thickness, newRecord.thickness);
-            document.getElementById('table-detector').innerHTML = generateTableHTML('detector', previousRecord?.detector, newRecord.detector);
-
-            const selectedParam = document.getElementById('chart-param-select').value;
-            updateTrendChart(selectedParam, newRecord.line, newRecord.model);
-            document.getElementById('chart-param-select').dataset.currentLine = newRecord.line;
-            document.getElementById('chart-param-select').dataset.currentModel = newRecord.model;
-        }
-
-        function promptDeleteDate(model, widthSpec, date) {
-            pendingDelete = { type: 'date', data: { model, widthSpec, date } };
-            document.getElementById('delete-modal-text').textContent = `確定要刪除「${model} (寬幅: ${widthSpec})」於 ${date} 匯入的所有時段紀錄嗎？`;
-            document.getElementById('delete-confirm-modal').classList.remove('hidden');
-        }
-
-        function promptDeleteSingle() {
-            if (!currentViewedRecordId) return;
-            const record = window.importedDatabase.find(r => r.id === currentViewedRecordId);
-            if (!record) return;
-            pendingDelete = { type: 'single', data: currentViewedRecordId };
-            document.getElementById('delete-modal-text').textContent = `確定要刪除「${record.model}」於 ${record.date} ${record.time} 的單筆紀錄嗎？`;
-            document.getElementById('delete-confirm-modal').classList.remove('hidden');
-        }
-
-        function closeDeleteModal() {
-            document.getElementById('delete-confirm-modal').classList.add('hidden');
-            pendingDelete = { type: null, data: null };
-        }
-
+        function promptDeleteDate(m, w, d) { pendingDelete = { type: 'date', data: { model: m, widthSpec: w, date: d } }; document.getElementById('delete-modal-text').textContent = `確定刪除「${m}」於 ${d} 的所有紀錄？`; document.getElementById('delete-confirm-modal').classList.remove('hidden'); }
+        function promptDeleteSingle() { if (!currentViewedRecordId) return; const r = window.importedDatabase.find(r => r.id === currentViewedRecordId); if (!r) return; pendingDelete = { type: 'single', data: currentViewedRecordId }; document.getElementById('delete-modal-text').textContent = `確定刪除「${r.model}」於 ${r.date} ${r.time} 的紀錄？`; document.getElementById('delete-confirm-modal').classList.remove('hidden'); }
+        function closeDeleteModal() { document.getElementById('delete-confirm-modal').classList.add('hidden'); pendingDelete = { type: null, data: null }; }
         async function executeDelete() {
-            if (!pendingDelete.type) return;
-
-            const btn = document.getElementById('btn-confirm-delete');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>刪除中...';
-            btn.disabled = true;
-
+            if (!pendingDelete.type) return; const btn = document.getElementById('btn-confirm-delete'); const origText = btn.innerHTML; btn.innerHTML = '刪除中...'; btn.disabled = true;
             try {
                 if (pendingDelete.type === 'date') {
-                    const { model, widthSpec, date } = pendingDelete.data;
-                    const recordsToDelete = window.importedDatabase.filter(r => r.model === model && String(r.widthSpec) === String(widthSpec) && r.date === date);
-                    
-                    for (const r of recordsToDelete) {
-                        if (window.deleteRecordFromFirebase) await window.deleteRecordFromFirebase(r.id);
-                    }
+                    const { model, widthSpec, date } = pendingDelete.data; const rDel = window.importedDatabase.filter(r => r.model === model && String(r.widthSpec) === String(widthSpec) && r.date === date);
+                    for (const r of rDel) if (window.deleteRecordFromFirebase) await window.deleteRecordFromFirebase(r.id);
                     window.importedDatabase = window.importedDatabase.filter(r => !(r.model === model && String(r.widthSpec) === String(widthSpec) && r.date === date));
-                    
                 } else if (pendingDelete.type === 'single') {
-                    const id = pendingDelete.data;
-                    if (window.deleteRecordFromFirebase) await window.deleteRecordFromFirebase(id);
-                    window.importedDatabase = window.importedDatabase.filter(r => r.id !== id);
-                    closeDashboard(); // 退回總覽列表
+                    const id = pendingDelete.data; if (window.deleteRecordFromFirebase) await window.deleteRecordFromFirebase(id);
+                    window.importedDatabase = window.importedDatabase.filter(r => r.id !== id); closeDashboard();
                 }
-            } catch (error) {
-                console.error("執行刪除時發生錯誤:", error);
-            }
-
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-            closeDeleteModal();
-            renderOverview(); // 重新渲染總覽列表
+            } catch (e) { console.error(e); }
+            btn.innerHTML = origText; btn.disabled = false; closeDeleteModal(); renderOverview();
         }
 
-        function openBatchModalForModel(model, widthSpec) {
-            document.getElementById('db-modal').classList.remove('hidden');
-            selectedForBatch = []; 
-            renderDatabaseList(model, widthSpec);
-        }
-
-        function renderDatabaseList(filterModel = '', filterWidth = '') {
-            const tbody = document.getElementById('db-list-body'); tbody.innerHTML = '';
-            let sortedDB = [...window.importedDatabase].sort((a, b) => new Date(b.date + 'T' + b.time) - new Date(a.date + 'T' + a.time));
-            
-            if (filterModel) sortedDB = sortedDB.filter(d => String(d.model) === String(filterModel));
-            if (filterWidth) sortedDB = sortedDB.filter(d => String(d.widthSpec) === String(filterWidth));
-
-            if (sortedDB.length === 0) { tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500 font-medium bg-gray-50">尚無資料。</td></tr>`; return; }
-
-            sortedDB.forEach(record => {
-                const tr = document.createElement('tr'); tr.className = "hover:bg-indigo-50 transition cursor-pointer";
-                tr.onclick = (e) => {
-                    if(e.target.tagName !== 'INPUT') { const cb = document.getElementById(`cb-${record.id}`); cb.checked = !cb.checked; handleCheckboxChange(record.id, cb.checked); }
-                };
-                tr.innerHTML = `
-                    <td class="px-4 py-3"><input type="checkbox" id="cb-${record.id}" value="${record.id}" ${selectedForBatch.includes(record.id) ? 'checked' : ''} onchange="handleCheckboxChange('${record.id}', this.checked)" class="w-5 h-5 text-indigo-600 rounded border-gray-300 cursor-pointer"></td>
-                    <td class="px-4 py-3 font-bold text-gray-800">${record.date} <span class="text-indigo-600">${record.time}</span></td>
-                    <td class="px-4 py-3"><span class="bg-slate-200 text-slate-800 px-2.5 py-1 rounded-md text-xs font-bold">${record.line} 線</span></td>
-                    <td class="px-4 py-3 font-bold text-blue-700">${record.model} <span class="text-xs text-red-600 bg-red-50 px-1 py-0.5 rounded ml-2">寬幅: ${record.widthSpec}</span></td>`;
-                tbody.appendChild(tr);
-            });
+        function openBatchModalForModel(model, widthSpec) { document.getElementById('db-modal').classList.remove('hidden'); selectedForBatch = []; renderDatabaseList(model, widthSpec); }
+        function renderDatabaseList(fMod = '', fWid = '') {
+            const tb = document.getElementById('db-list-body'); tb.innerHTML = '';
+            let db = [...window.importedDatabase].sort((a, b) => new Date(b.date + 'T' + b.time) - new Date(a.date + 'T' + a.time));
+            if (fMod) db = db.filter(d => String(d.model) === String(fMod)); if (fWid) db = db.filter(d => String(d.widthSpec) === String(fWid));
+            if (db.length === 0) return tb.innerHTML = `<tr><td colspan="4" class="text-center py-4">無資料</td></tr>`;
+            db.forEach(r => { const tr = document.createElement('tr'); tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') { const cb = document.getElementById(`cb-${r.id}`); cb.checked = !cb.checked; handleCheckboxChange(r.id, cb.checked); } }; tr.innerHTML = `<td class="px-4 py-3"><input type="checkbox" id="cb-${r.id}" value="${r.id}" ${selectedForBatch.includes(r.id)?'checked':''} onchange="handleCheckboxChange('${r.id}', this.checked)" class="w-5 h-5 cursor-pointer"></td><td class="px-4 py-3 font-bold">${r.date} ${r.time}</td><td class="px-4 py-3">${r.line}線</td><td class="px-4 py-3">${r.model}</td>`; tb.appendChild(tr); });
             document.getElementById('selected-count').textContent = selectedForBatch.length;
         }
-
-        function handleCheckboxChange(id, isChecked) {
-            if (isChecked) { if (selectedForBatch.length >= 5) { alert("最多只能勾選 5 筆"); document.getElementById(`cb-${id}`).checked = false; return; } selectedForBatch.push(id); }
-            else { selectedForBatch = selectedForBatch.filter(itemId => itemId !== id); }
-            document.getElementById('selected-count').textContent = selectedForBatch.length;
+        function handleCheckboxChange(id, chk) { if (chk) { if (selectedForBatch.length >= 5) { window.showAppMessage("提醒", "最多只能選5筆", "warning"); document.getElementById(`cb-${id}`).checked = false; return; } selectedForBatch.push(id); } else { selectedForBatch = selectedForBatch.filter(i => i !== id); } document.getElementById('selected-count').textContent = selectedForBatch.length; }
+        function crossDayBatchCompare(m, w) { const recs = window.importedDatabase.filter(r => String(r.model) === String(m) && String(r.widthSpec) === String(w)); if (recs.length === 0) return; const byD = {}; recs.forEach(r => { if (!byD[r.date]) byD[r.date] = []; byD[r.date].push(r); }); const sD = Object.keys(byD).sort((a, b) => new Date(b) - new Date(a)); const sel = []; for (let i = 0; i < Math.min(5, sD.length); i++) { const dRecs = byD[sD[i]].sort((a, b) => new Date('1970/01/01 ' + b.time) - new Date('1970/01/01 ' + a.time)); sel.push(dRecs[0]); } executeBatchCompare(sel); }
+        function executeBatchCompare(dRecs = null) {
+            let rCom = dRecs || selectedForBatch.map(id => window.importedDatabase.find(r => r.id === id)).filter(Boolean); if (rCom.length < 2) { window.showAppMessage("提醒", "至少需勾選2筆資料", "warning"); return; } rCom.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
+            closeDatabaseModal(); document.getElementById('overview-list-view').classList.add('hidden'); document.getElementById('dashboard-container').classList.add('hidden');
+            const bDash = document.getElementById('batch-dashboard-container'); bDash.classList.remove('hidden'); bDash.classList.add('flex');
+            document.getElementById('batch-info-text').textContent = `已選擇 ${rCom.length} 筆比對 (型號: ${rCom[0].model})`;
+            document.getElementById('batch-tables-container').innerHTML = generateBatchExtruderTable(rCom) + generateBatchNormalTable('規格', 'specs', rCom, 'bg-orange-600') + generateBatchNormalTable('Air Chamber', 'airchamber', rCom, 'bg-sky-700') + generateBatchNormalTable('Winder', 'winder', rCom, 'bg-indigo-700') + generateBatchNormalTable('測厚儀', 'thickness', rCom, 'bg-emerald-700') + generateBatchNormalTable('檢出機', 'detector', rCom, 'bg-purple-700');
         }
+        function generateBatchExtruderTable(recs) { let h = `<div class="bg-white border rounded-xl overflow-hidden"><div class="bg-slate-700 text-white px-5 py-3 font-bold">押出機 批次比對</div><div class="overflow-x-auto"><table class="min-w-full divide-y text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-3 text-left border-r bg-gray-100 sticky left-0 z-10 w-32">項目</th><th class="px-2 py-3 text-center border-r bg-gray-100 sticky left-32 z-10 w-16">軸向</th>`; recs.forEach(r => h += `<th class="px-3 py-3 text-center bg-indigo-50 border-r">${r.date.slice(5)}<br>${r.time}</th>`); h += `</tr></thead><tbody class="divide-y">`; configSchema.extruder.forEach((it, idx) => { ['A','B','C'].forEach((ax, aIdx) => { const bg = idx%2===0?'bg-white':'bg-gray-50'; h += `<tr class="${bg}">`; if (ax==='A') h += `<td rowspan="3" class="px-3 py-2 border-r bg-gray-50 sticky left-0 z-10">${it.name}</td>`; h += `<td class="px-2 py-2 text-center border-r bg-gray-50 sticky left-32 z-10">${ax}</td>`; for (let i = 0; i < recs.length; i++) { const cv = recs[i].extruder[ax][it.id]; let dc = 'text-gray-700'; if (i > 0) { const pv = recs[i-1].extruder[ax][it.id]; if (pv !== '--' && checkIsDifferent(pv, cv)) dc = 'diff-blink px-1 font-bold'; else if (pv !== '--' && String(pv)===String(cv)) dc = 'text-blue-800 font-bold'; } h += `<td class="px-3 py-2 text-center border-r"><span class="${dc}">${cv}</span></td>`; } h += `</tr>`; }); }); return h + `</tbody></table></div></div>`; }
+        function generateBatchNormalTable(tit, sKey, recs, bgCol) { let s = configSchema[sKey]; if (sKey === 'winder' && recs.length > 0 && (recs[0].line === '3' || recs[0].line === 'C')) s = configSchema.winder_line3; let h = `<div class="bg-white border rounded-xl overflow-hidden"><div class="${bgCol} text-white px-5 py-3 font-bold">${tit} 批次比對</div><div class="overflow-x-auto"><table class="min-w-full divide-y text-sm"><thead class="bg-gray-50"><tr><th class="px-3 py-3 text-left border-r bg-gray-100 sticky left-0 z-10 w-48">項目</th>`; recs.forEach(r => h += `<th class="px-3 py-3 text-center bg-indigo-50 border-r">${r.date.slice(5)}<br>${r.time}</th>`); h += `</tr></thead><tbody class="divide-y">`; s.forEach(it => { h += `<tr><td class="px-3 py-2 border-r bg-gray-50 sticky left-0 z-10">${it.name}</td>`; for (let i = 0; i < recs.length; i++) { const cv = recs[i][sKey][it.id]; let dc = 'text-gray-700'; if (i > 0) { const pv = recs[i-1][sKey][it.id]; if (pv !== '--' && checkIsDifferent(pv, cv)) dc = 'diff-blink px-1 font-bold'; else if (pv !== '--' && String(pv)===String(cv)) dc = 'text-blue-800 font-bold'; } h += `<td class="px-3 py-2 text-center border-r"><span class="${dc}">${cv}</span></td>`; } h += `</tr>`; }); return h + `</tbody></table></div></div>`; }
 
-        function crossDayBatchCompare(model, widthSpec) {
-            const records = window.importedDatabase.filter(r => String(r.model) === String(model) && String(r.widthSpec) === String(widthSpec));
-            if (records.length === 0) return;
+        // --- STREAMING_CHUNK:配方資料庫與正則分離邏輯 ---
+        document.getElementById('recipe-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0]; if (!file) return;
+            
+            // 解析檔名中的 Line 1, Line 2, Line 3
+            const filename = file.name;
+            let lineIndicator = "";
+            const lineMatch = filename.match(/line\s*([1-3])/i);
+            if (lineMatch) lineIndicator = `Line ${lineMatch[1]}`;
 
-            const byDate = {};
-            records.forEach(r => { if (!byDate[r.date]) byDate[r.date] = []; byDate[r.date].push(r); });
+            const labelBtn = this.parentElement; const originalHTML = labelBtn.innerHTML;
+            labelBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> 解析中...'; labelBtn.classList.add('opacity-75', 'cursor-not-allowed');
             
-            const sortedDates = Object.keys(byDate).sort((a, b) => new Date(b) - new Date(a));
-            const selected = [];
-            for (let i = 0; i < Math.min(5, sortedDates.length); i++) {
-                const dayRecords = byDate[sortedDates[i]];
-                dayRecords.sort((a, b) => new Date('1970/01/01 ' + b.time) - new Date('1970/01/01 ' + a.time));
-                selected.push(dayRecords[0]); 
-            }
-            
-            executeBatchCompare(selected);
-        }
-
-        function executeBatchCompare(directRecords = null) {
-            let recordsToCompare = directRecords;
-            if (!recordsToCompare) {
-                recordsToCompare = selectedForBatch.map(id => window.importedDatabase.find(r => r.id === id)).filter(Boolean);
-            }
-            if (recordsToCompare.length < 2) { alert("請至少選擇 2 筆資料才能進行批次比對！"); return; }
-            
-            recordsToCompare.sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
-            
-            closeDatabaseModal();
-            document.getElementById('overview-list-view').classList.add('hidden');
-            document.getElementById('dashboard-container').classList.add('hidden');
-            
-            const batchDash = document.getElementById('batch-dashboard-container');
-            batchDash.classList.remove('hidden'); batchDash.classList.add('flex');
-
-            document.getElementById('batch-info-text').textContent = `已選擇 ${recordsToCompare.length} 筆資料進行比對 (生產型號: ${recordsToCompare[0].model}, 寬幅: ${recordsToCompare[0].widthSpec}, 產線: ${recordsToCompare[0].line}線)`;
-            
-            const container = document.getElementById('batch-tables-container');
-            container.innerHTML = generateBatchExtruderTable(recordsToCompare) + 
-                                  generateBatchNormalTable('規格參數', 'specs', recordsToCompare, 'bg-orange-600', 'fas fa-tags') +
-                                  generateBatchNormalTable('Air Chamber', 'airchamber', recordsToCompare, 'bg-sky-700', 'fas fa-wind') +
-                                  generateBatchNormalTable('Winder (收捲機)', 'winder', recordsToCompare, 'bg-indigo-700', 'fas fa-scroll') +
-                                  generateBatchNormalTable('測厚儀 (Thickness Gauge)', 'thickness', recordsToCompare, 'bg-emerald-700', 'fas fa-ruler-combined') +
-                                  generateBatchNormalTable('檢出機 (Detector)', 'detector', recordsToCompare, 'bg-purple-700', 'fas fa-search-plus');
-        }
-
-        function generateBatchExtruderTable(records) {
-            let html = `
-            <div class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card shadow-sm">
-                <div class="bg-slate-700 text-white px-5 py-3 flex justify-between items-center"><h2 class="text-lg font-bold flex items-center"><i class="fas fa-industry mr-3"></i> 1. 押出機 (Extruder) - 批次比對</h2></div>
-                <div class="p-0 overflow-x-auto"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr>
-                <th class="px-3 py-3 text-left font-bold text-gray-500 border-r border-b bg-gray-100 sticky left-0 z-10 w-32 shadow-[1px_0_0_0_#e5e7eb]">管制項目</th><th class="px-2 py-3 text-center font-bold text-gray-500 border-r border-b bg-gray-100 sticky left-32 z-10 w-16 shadow-[1px_0_0_0_#e5e7eb]">軸向</th>`;
-            records.forEach(r => html += `<th class="px-3 py-3 text-center font-bold text-indigo-800 border-r border-b bg-indigo-50 leading-tight">${r.date.slice(5)}<br/><span class="text-lg">${r.time}</span></th>`);
-            html += `</tr></thead><tbody class="bg-white divide-y divide-gray-200">`;
-
-            configSchema.extruder.forEach((item, index) => {
-                ['A', 'B', 'C'].forEach((axis, aIndex) => {
-                    const rowBg = index % 2 === 0 ? 'bg-white' : 'bg-gray-50'; const borderB = aIndex === 2 ? 'border-b-2 border-gray-200' : '';
-                    html += `<tr class="hover:bg-indigo-50 transition ${rowBg} ${borderB}">`;
-                    if (axis === 'A') html += `<td rowspan="3" class="px-3 py-2 font-bold text-gray-800 border-r border-b-2 border-gray-200 bg-gray-50 sticky left-0 z-10 shadow-[1px_0_0_0_#e5e7eb]">${item.name} <span class="text-xs text-gray-500 block font-normal mt-1">${item.standard||''}</span></td>`;
-                    html += `<td class="px-2 py-2 text-center font-bold text-gray-600 border-r bg-gray-50 sticky left-32 z-10 shadow-[1px_0_0_0_#e5e7eb]">${axis}</td>`;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type: 'array'});
+                    const jsonRaw = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1});
+                    const extractedRecipes = extractRecipesFromExcel(jsonRaw);
                     
-                    for (let i = 0; i < records.length; i++) {
-                        const currVal = records[i].extruder[axis][item.id]; let diffClass = 'text-gray-700 font-medium';
-                        if (i > 0) {
-                            const prevVal = records[i-1].extruder[axis][item.id];
-                            if (prevVal !== '--' && checkIsDifferent(prevVal, currVal)) diffClass = 'diff-blink px-1 py-0.5 inline-block font-bold text-base';
-                            else if (prevVal !== '--' && String(prevVal) === String(currVal)) diffClass = 'text-blue-800 font-bold';
-                        }
-                        html += `<td class="px-3 py-2 text-center border-r"><span class="${diffClass}">${currVal}</span></td>`;
+                    if (extractedRecipes.length === 0) {
+                        window.showAppMessage("錯誤", "未能解析出有效的配方資料，請確認檔案內是否包含原料欄位。", "error");
+                    } else {
+                        extractedRecipes.forEach(recipe => {
+                            if (lineIndicator) recipe.line = lineIndicator; // 將解析出的產線賦予配方物件
+
+                            let sameModelRecipes = window.importedRecipes.filter(r => r.model === recipe.model);
+                            let exactMatch = sameModelRecipes.find(r => {
+                                if (r.device !== recipe.device) return false;
+                                let keysA = Object.keys(r.axes || {}).sort(); let keysB = Object.keys(recipe.axes || {}).sort();
+                                if (keysA.join(',') !== keysB.join(',')) return false;
+                                for (let k of keysA) { if (r.axes[k].materials !== recipe.axes[k].materials || r.axes[k].ratio !== recipe.axes[k].ratio) return false; }
+                                return true;
+                            });
+
+                            if (exactMatch) {
+                                recipe.id = exactMatch.id;
+                                if (!recipe.addDate && exactMatch.addDate) recipe.addDate = exactMatch.addDate;
+                                if (!recipe.line && exactMatch.line) recipe.line = exactMatch.line; // 保留原有的產線資訊
+                                let existingIndex = window.importedRecipes.findIndex(r => r.id === exactMatch.id);
+                                window.importedRecipes[existingIndex] = recipe;
+                            } else {
+                                window.importedRecipes.push(recipe);
+                            }
+                            if(window.saveRecipeToFirebase) window.saveRecipeToFirebase(recipe);
+                        });
+                        window.showAppMessage("匯入成功", `成功過濾並匯入了 ${extractedRecipes.length} 筆有效配方！`, "success");
+                        if (currentRecipeModel) renderRecipeDetailTable(currentRecipeModel); else renderRecipeList();
                     }
-                    html += `</tr>`;
+                } catch (error) { 
+                    console.error("解析配方失敗:", error); window.showAppMessage("解析失敗", "請確認檔案格式是否正確。", "error"); 
+                } finally { e.target.value = ''; labelBtn.innerHTML = originalHTML; labelBtn.classList.remove('opacity-75', 'cursor-not-allowed'); }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function extractRecipesFromExcel(jsonRaw) {
+            let recipes = [];
+            let currentRecipe = null;
+            let currentAddDate = '';
+
+            for (let i = 0; i < jsonRaw.length; i++) {
+                let row = jsonRaw[i];
+                if (!row || row.length === 0) continue;
+
+                let dateVal = row[1] || row[2]; // B or C column
+                if (dateVal) {
+                    if (typeof dateVal === 'number' && dateVal > 40000) {
+                        let excelEpoch = new Date(Date.UTC(1899, 11, 30));
+                        currentAddDate = new Date(excelEpoch.getTime() + (dateVal - 1) * 86400000).toISOString().split('T')[0];
+                    } else if (typeof dateVal === 'string') {
+                        let dMatch = dateVal.match(/(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})|(\d{1,2}[\/\-]\d{1,2})/);
+                        if (dMatch) currentAddDate = dMatch[0].replace(/\//g, '-');
+                    }
+                }
+
+                let rawStrs = [row[3], row[4], row[5]].map(v => v !== undefined && v !== null ? String(v).trim() : '').filter(v => v !== ''); 
+                let combinedStr = rawStrs.join(' ').replace(/[\r\n]+/g, ' '); 
+                let rowModel = ''; let rowDevice = '--';
+                
+                if (combinedStr) {
+                    // 正則表達式：捕捉英文字母開頭+數字(如 UM200-PC69, G1, UN230)
+                    let modelMatch = combinedStr.match(/([A-Za-z]{1,2}\d+[A-Za-z0-9\-]*)/);
+                    if (modelMatch) {
+                        rowModel = modelMatch[1].toUpperCase();
+                        combinedStr = combinedStr.replace(modelMatch[0], ''); // 將捕捉到的型號從字串移除
+                    }
+
+                    // 捕捉剩餘字串中的鳥嘴器
+                    let deviceMatch = combinedStr.match(/\(([^)]*鳥嘴[^)]*)\)/) || combinedStr.match(/（([^）]*鳥嘴[^）]*)）/);
+                    if (deviceMatch) {
+                        rowDevice = deviceMatch[1].trim();
+                    } else if (combinedStr.includes('鳥嘴')) {
+                        let parts = combinedStr.split(/[\s\(\)（）]+/);
+                        let birdPart = parts.find(p => p.includes('鳥嘴'));
+                        if (birdPart) rowDevice = birdPart;
+                    }
+                }
+
+                let axisRaw = row[6]; // G column
+                let layerRatioRaw = row[16]; // Q column
+                
+                if (rowModel) {
+                    if (currentRecipe && Object.keys(currentRecipe.axes).length > 0) {
+                        recipes.push(currentRecipe);
+                    }
+                    currentRecipe = {
+                        id: 'recipe_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                        addDate: currentAddDate || new Date().toISOString().split('T')[0],
+                        model: rowModel, device: rowDevice, axes: {}
+                    };
+                }
+
+                if (currentRecipe && axisRaw) {
+                    let axis = String(axisRaw).trim().toUpperCase();
+                    if (['A', 'B', 'C'].includes(axis)) {
+                        let materials = [];
+                        for (let col = 7; col <= 15; col++) {
+                            if (row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== '') materials.push(String(row[col]).trim());
+                        }
+                        
+                        // 只在有讀到原料時才寫入
+                        if (materials.length > 0) {
+                            let ratioStr = '';
+                            if (layerRatioRaw !== undefined && layerRatioRaw !== null) {
+                                if (typeof layerRatioRaw === 'number') {
+                                    if (layerRatioRaw < 1 && layerRatioRaw > 0) ratioStr = (layerRatioRaw * 100).toFixed(1) + '%';
+                                    else ratioStr = layerRatioRaw + '%';
+                                } else {
+                                    ratioStr = String(layerRatioRaw).trim();
+                                    if(!ratioStr.endsWith('%') && !isNaN(Number(ratioStr))) ratioStr += '%';
+                                }
+                            }
+                            currentRecipe.axes[axis] = { materials: materials.join(' + '), ratio: ratioStr || '--' };
+                        }
+                    }
+                }
+            }
+            if (currentRecipe && Object.keys(currentRecipe.axes).length > 0) recipes.push(currentRecipe);
+            return recipes;
+        }
+
+        // --- STREAMING_CHUNK:配方清單渲染邏輯 ---
+        function handleRecipeSearch() {
+            if (currentRecipeModel) backToRecipeOverview();
+            renderRecipeList();
+        }
+
+        function renderRecipeList() {
+            const overviewView = document.getElementById('recipe-overview-view');
+            const searchText = document.getElementById('recipe-search').value.toLowerCase().trim();
+            let displayData = window.importedRecipes || [];
+            
+            let groupedByModel = {};
+            displayData.forEach(r => { if(!groupedByModel[r.model]) groupedByModel[r.model] = []; groupedByModel[r.model].push(r); });
+
+            let filteredModels = Object.keys(groupedByModel).filter(model => {
+                if (!searchText) return true;
+                if (model.toLowerCase().includes(searchText)) return true;
+                return groupedByModel[model].some(r => r.device && r.device.toLowerCase().includes(searchText));
+            }).sort((a, b) => a.localeCompare(b)); 
+
+            if (filteredModels.length === 0) {
+                overviewView.innerHTML = '<div class="text-center p-8 text-gray-500 bg-gray-50 font-medium rounded-lg border">目前尚無符合的配方資料。</div>';
+                return;
+            }
+
+            let html = `
+            <div class="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th class="px-5 py-4 text-left font-bold text-gray-700">生產型號</th>
+                            <th class="px-5 py-4 text-left font-bold text-gray-700">綁定鳥嘴器</th>
+                            <th class="px-5 py-4 text-left font-bold text-gray-700 w-48">最新添加日期</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">`;
+            
+            filteredModels.forEach(model => {
+                let recipes = groupedByModel[model]; let isConflict = recipes.length > 1;
+                let latestRecipe = recipes.sort((a,b) => new Date(b.addDate) - new Date(a.addDate))[0];
+                let bgHover = isConflict ? 'hover:bg-orange-50' : 'hover:bg-green-50';
+                
+                // 產線標籤加強顯示效果，並依據不同產線給予不同顏色
+                let lineColorClass = "bg-blue-600 border-blue-700 text-white";
+                if (latestRecipe.line) {
+                    if (latestRecipe.line.includes('1')) lineColorClass = "bg-cyan-600 border-cyan-700 text-white";
+                    else if (latestRecipe.line.includes('2')) lineColorClass = "bg-blue-600 border-blue-700 text-white";
+                    else if (latestRecipe.line.includes('3')) lineColorClass = "bg-indigo-600 border-indigo-700 text-white";
+                }
+                
+                let lineBadge = latestRecipe.line ? `<span class="${lineColorClass} text-xs px-2.5 py-1 rounded font-bold shadow-md border mr-2 inline-flex items-center tracking-wider"><i class="fas fa-industry mr-1.5"></i>${latestRecipe.line}</span>` : '';
+
+                html += `
+                <tr class="${bgHover} transition cursor-pointer group" onclick="viewRecipeDetail('${model}')">
+                    <td class="px-5 py-4 font-bold text-gray-900 group-hover:text-green-700 transition text-base flex items-center flex-wrap gap-2">
+                        <span class="text-lg mr-1">${model}</span>
+                        ${lineBadge}
+                        ${isConflict ? '<span class="bg-orange-100 text-orange-700 text-xs px-2.5 py-1 rounded font-bold border border-orange-200 shadow-sm"><i class="fas fa-exclamation-triangle mr-1"></i>配方衝突</span>' : ''}
+                    </td>
+                    <td class="px-5 py-4 text-gray-600 font-medium text-base">${latestRecipe.device || '<span class="text-gray-400 italic text-sm">--</span>'}</td>
+                    <td class="px-5 py-4 text-gray-500"><i class="far fa-calendar-alt mr-2"></i>${latestRecipe.addDate || '--'}</td>
+                </tr>`;
+            });
+            html += `</tbody></table></div>`; overviewView.innerHTML = html;
+        }
+
+        function viewRecipeDetail(model) {
+            currentRecipeModel = model; document.getElementById('recipe-overview-view').classList.add('hidden'); document.getElementById('recipe-detail-view').classList.remove('hidden'); document.getElementById('recipe-detail-view').classList.add('flex'); document.getElementById('recipe-detail-title').innerHTML = `<i class="fas fa-cube mr-2 text-green-600"></i> <span class="tracking-wide">${model}</span> 專屬配方分析`;
+            renderRecipeDetailTable(model);
+        }
+
+        function backToRecipeOverview() { currentRecipeModel = null; document.getElementById('recipe-detail-view').classList.add('hidden'); document.getElementById('recipe-detail-view').classList.remove('flex'); document.getElementById('recipe-overview-view').classList.remove('hidden'); renderRecipeList(); }
+
+        function renderRecipeDetailTable(model) {
+            const tbody = document.getElementById('recipe-detail-body');
+            let recipes = window.importedRecipes.filter(r => r.model === model);
+            let isConflict = recipes.length > 1; let html = '';
+            
+            recipes.forEach((recipe, recipeIndex) => {
+                let axes = ['A', 'B', 'C']; let validAxes = axes.filter(ax => recipe.axes[ax]); if (validAxes.length === 0) validAxes = axes;
+                let bgClass = isConflict ? 'bg-orange-50' : 'bg-white'; if (isConflict && recipeIndex % 2 !== 0) bgClass = 'bg-amber-50/50'; if (!isConflict) bgClass = recipeIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/40';
+                let conflictIcon = isConflict ? `<div class="text-xs text-orange-700 font-bold mt-1.5 bg-orange-200 border border-orange-300 px-2 py-0.5 rounded shadow-sm inline-block">版本 ${String.fromCharCode(65+recipeIndex)}</div>` : '';
+
+                validAxes.forEach((axis, index) => {
+                    let data = recipe.axes[axis] || { materials: '--', ratio: '--' };
+                    let trClass = `hover:bg-yellow-100 transition border-b ${bgClass}`;
+                    let isLast = index === validAxes.length - 1; let borderBClass = isLast ? (isConflict ? 'border-b-2 border-orange-300' : 'border-b') : '';
+                    
+                    html += `<tr class="${trClass}">`;
+                    if (index === 0) {
+                        html += `<td rowspan="${validAxes.length}" class="px-4 py-3 text-gray-500 font-medium align-middle border-r ${isLast && isConflict ? 'border-b-2 border-orange-300':''}"><i class="far fa-calendar-plus mr-1"></i>${recipe.addDate || '--'}</td>`;
+                        html += `<td rowspan="${validAxes.length}" class="px-4 py-3 font-bold text-gray-800 align-middle border-r ${isLast && isConflict ? 'border-b-2 border-orange-300':''}">${recipe.device || '--'}<br>${conflictIcon}</td>`;
+                    }
+                    
+                    let axisColor = axis === 'A' ? 'text-red-600' : (axis === 'B' ? 'text-blue-600' : 'text-emerald-600');
+                    let diffHighlight = '';
+                    if (isConflict) {
+                        let isDifferent = false;
+                        for (let otherRecipe of recipes) { if (otherRecipe.id !== recipe.id && ( (otherRecipe.axes[axis]?.materials || '--') !== data.materials || (otherRecipe.axes[axis]?.ratio || '--') !== data.ratio )) { isDifferent = true; break; } }
+                        if (isDifferent) diffHighlight = 'text-orange-900 font-bold bg-orange-200/80 border shadow-inner';
+                    }
+
+                    html += `<td class="px-3 py-2 font-black ${axisColor} text-center border-r ${borderBClass}">${axis}</td>`;
+                    html += `<td class="px-4 py-2 text-gray-800 border-r font-medium ${borderBClass} ${diffHighlight}">${data.materials}</td>`;
+                    html += `<td class="px-4 py-2 text-red-600 font-bold text-center border-r text-base ${borderBClass} ${diffHighlight}">${data.ratio}</td>`;
+                    
+                    if (index === 0) {
+                        html += `<td rowspan="${validAxes.length}" class="px-4 py-3 text-center align-middle border-b ${isLast && isConflict ? 'border-b-2 border-orange-300':''}"><button onclick="deleteRecipe('${recipe.id}', '${model}')" class="text-gray-400 hover:text-red-600 transition p-2 hover:bg-red-50 border border-transparent hover:border-red-200 shadow-sm rounded-md" title="刪除此版本"><i class="fas fa-trash-alt"></i></button></td>`;
+                    }
+                    html += '</tr>';
                 });
             });
-            return html + `</tbody></table></div></div>`;
+            tbody.innerHTML = html;
         }
 
-        function generateBatchNormalTable(title, sectionKey, records, headerBg, icon) {
-            let schema = configSchema[sectionKey];
-            if (sectionKey === 'winder' && records.length > 0) {
-                const line = records[0].line;
-                if (line === '3' || line === '三' || line === 'C') {
-                    schema = configSchema.winder_line3;
-                }
-            }
-
-            let html = `
-            <div class="bg-white rounded-xl border border-gray-200 overflow-hidden section-card shadow-sm">
-                <div class="${headerBg} text-white px-5 py-3 flex justify-between items-center"><h2 class="text-md font-bold flex items-center"><i class="${icon} mr-3"></i> ${title} - 批次比對</h2></div>
-                <div class="p-0 overflow-x-auto"><table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-50"><tr>
-                <th class="px-3 py-3 text-left font-bold text-gray-500 border-r border-b bg-gray-100 sticky left-0 z-10 w-48 shadow-[1px_0_0_0_#e5e7eb]">管制項目</th>`;
-            records.forEach(r => html += `<th class="px-3 py-3 text-center font-bold text-indigo-800 border-r border-b bg-indigo-50 leading-tight">${r.date.slice(5)}<br/><span class="text-lg">${r.time}</span></th>`);
-            html += `</tr></thead><tbody class="bg-white divide-y divide-gray-200">`;
-
-            schema.forEach(item => {
-                html += `<tr class="hover:bg-indigo-50 transition border-b"><td class="px-3 py-2 font-bold text-gray-800 border-r bg-gray-50 sticky left-0 z-10 shadow-[1px_0_0_0_#e5e7eb]">${item.name}</td>`;
-                for (let i = 0; i < records.length; i++) {
-                    const currVal = records[i][sectionKey][item.id]; let diffClass = 'text-gray-700 font-medium', eqText = '';
-                    if (i > 0) {
-                        const prevVal = records[i-1][sectionKey][item.id];
-                        if (prevVal !== '--' && checkIsDifferent(prevVal, currVal)) diffClass = 'diff-blink px-2 py-0.5 inline-block font-bold text-base';
-                        else if (prevVal !== '--' && String(prevVal) === String(currVal)) { diffClass = 'text-blue-800 font-bold'; eqText = '<span class="text-xs text-gray-400 ml-1 font-normal">(一致)</span>'; }
-                    }
-                    html += `<td class="px-3 py-2 text-center border-r"><span class="${diffClass}">${currVal}</span><br>${eqText}</td>`;
-                }
-                html += `</tr>`;
+        async function deleteRecipe(id, model) {
+            window.showAppConfirm("刪除確認", "確定要刪除此版本配方嗎？", async () => {
+                if (window.deleteRecipeFromFirebase) await window.deleteRecipeFromFirebase(id);
+                window.importedRecipes = window.importedRecipes.filter(r => r.id !== id);
+                let remaining = window.importedRecipes.filter(r => r.model === model);
+                if (remaining.length > 0) renderRecipeDetailTable(model); else backToRecipeOverview();
             });
-            return html + `</tbody></table></div></div>`;
         }
 
-        // --- Event Listeners ---
-        document.getElementById('excel-upload').addEventListener('change', handleFileUpload);
-        document.getElementById('chart-param-select').addEventListener('change', function(e) {
-            const line = this.dataset.currentLine; const model = this.dataset.currentModel;
-            if (line && model) updateTrendChart(e.target.value, line, model);
-        });
+        // --- 初始化與連動邏輯 ---
+        document.getElementById('input-customer-name').addEventListener('input', function(e) { if (typeof updateWidthDatalist === 'function') updateWidthDatalist(e.target.value.trim()); });
+        function updateDatalists() { if (!window.importedDatabase) return; const customerList = document.getElementById('customer-list'); if (customerList) { const customers = [...new Set(window.importedDatabase.map(d => d.customer))].filter(c => c && c !== '未指定'); customerList.innerHTML = customers.map(c => `<option value="${c}">`).join(''); } updateWidthDatalist(document.getElementById('input-customer-name').value.trim()); }
+        window.updateDatalists = updateDatalists;
+        function updateWidthDatalist(customerName) { const widthList = document.getElementById('width-list'); if (!widthList) return; let filteredDb = window.importedDatabase; if (customerName) filteredDb = filteredDb.filter(d => d.customer === customerName); const widths = [...new Set(filteredDb.map(d => d.widthSpec))].filter(w => w && w !== '--'); widthList.innerHTML = widths.map(w => `<option value="${w}">`).join(''); }
         
-        // 監聽客戶名稱輸入，動態更新寬幅下拉選單
-        document.getElementById('input-customer-name').addEventListener('input', function(e) {
-            if (typeof updateWidthDatalist === 'function') updateWidthDatalist(e.target.value.trim());
-        });
-
-        // 收集所有客戶與寬幅並更新下拉選單 (Datalist)
-        function updateDatalists() {
-            if (!window.importedDatabase) return;
-            const customerList = document.getElementById('customer-list');
-            if (customerList) {
-                const customers = [...new Set(window.importedDatabase.map(d => d.customer))].filter(c => c && c !== '未指定');
-                customerList.innerHTML = customers.map(c => `<option value="${c}">`).join('');
-            }
-            // 初始化寬幅清單
-            updateWidthDatalist(document.getElementById('input-customer-name').value.trim());
-        }
-        window.updateDatalists = updateDatalists; // 暴露給 module 呼叫
-
-        // 根據選擇的客戶，過濾寬幅下拉選單
-        function updateWidthDatalist(customerName) {
-            const widthList = document.getElementById('width-list');
-            if (!widthList) return;
-            let filteredDb = window.importedDatabase;
-            if (customerName) filteredDb = filteredDb.filter(d => d.customer === customerName);
-            const widths = [...new Set(filteredDb.map(d => d.widthSpec))].filter(w => w && w !== '--');
-            widthList.innerHTML = widths.map(w => `<option value="${w}">`).join('');
-        }
-        
-        // 確保初始載入時是在總覽
         switchTab('overview');
     </script>
 </body>
